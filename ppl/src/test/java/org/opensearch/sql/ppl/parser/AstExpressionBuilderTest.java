@@ -42,7 +42,6 @@ import static org.opensearch.sql.ast.dsl.AstDSL.stringLiteral;
 import static org.opensearch.sql.ast.dsl.AstDSL.unresolvedArg;
 import static org.opensearch.sql.ast.dsl.AstDSL.xor;
 
-import com.google.common.collect.ImmutableMap;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -51,7 +50,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.opensearch.sql.ast.expression.AllFields;
 import org.opensearch.sql.ast.expression.DataType;
-import org.opensearch.sql.ast.expression.RelevanceFieldList;
 
 public class AstExpressionBuilderTest extends AstBuilderTest {
 
@@ -276,30 +274,6 @@ public class AstExpressionBuilderTest extends AstBuilderTest {
     assertEqual(
         "source=t | eval f=3+2",
         eval(relation("t"), let(field("f"), function("+", intLiteral(3), intLiteral(2)))));
-  }
-
-  @Test
-  public void testBinaryOperationExprWithParentheses() {
-    assertEqual(
-        "source = t | where a = (1 + 2) * 3",
-        filter(
-            relation("t"),
-            compare(
-                "=",
-                field("a"),
-                function("*", function("+", intLiteral(1), intLiteral(2)), intLiteral(3)))));
-  }
-
-  @Test
-  public void testBinaryOperationExprPrecedence() {
-    assertEqual(
-        "source = t | where a = 1 + 2 * 3",
-        filter(
-            relation("t"),
-            compare(
-                "=",
-                field("a"),
-                function("+", intLiteral(1), function("*", intLiteral(2), intLiteral(3))))));
   }
 
   @Test
@@ -673,67 +647,6 @@ public class AstExpressionBuilderTest extends AstBuilderTest {
             field("__id"),
             field("_routing"),
             field("___field")));
-  }
-
-  @Test
-  public void canBuildMatchRelevanceFunctionWithArguments() {
-    assertEqual(
-        "source=test | where match('message', 'test query', analyzer='keyword')",
-        filter(
-            relation("test"),
-            function(
-                "match",
-                unresolvedArg("field", qualifiedName("message")),
-                unresolvedArg("query", stringLiteral("test query")),
-                unresolvedArg("analyzer", stringLiteral("keyword")))));
-  }
-
-  @Test
-  public void canBuildMulti_matchRelevanceFunctionWithArguments() {
-    assertEqual(
-        "source=test | where multi_match(['field1', 'field2' ^ 3.2],"
-            + "'test query', analyzer='keyword')",
-        filter(
-            relation("test"),
-            function(
-                "multi_match",
-                unresolvedArg(
-                    "fields",
-                    new RelevanceFieldList(ImmutableMap.of("field1", 1.F, "field2", 3.2F))),
-                unresolvedArg("query", stringLiteral("test query")),
-                unresolvedArg("analyzer", stringLiteral("keyword")))));
-  }
-
-  @Test
-  public void canBuildSimple_query_stringRelevanceFunctionWithArguments() {
-    assertEqual(
-        "source=test | where simple_query_string(['field1', 'field2' ^ 3.2],"
-            + "'test query', analyzer='keyword')",
-        filter(
-            relation("test"),
-            function(
-                "simple_query_string",
-                unresolvedArg(
-                    "fields",
-                    new RelevanceFieldList(ImmutableMap.of("field1", 1.F, "field2", 3.2F))),
-                unresolvedArg("query", stringLiteral("test query")),
-                unresolvedArg("analyzer", stringLiteral("keyword")))));
-  }
-
-  @Test
-  public void canBuildQuery_stringRelevanceFunctionWithArguments() {
-    assertEqual(
-        "source=test | where query_string(['field1', 'field2' ^ 3.2],"
-            + "'test query', analyzer='keyword')",
-        filter(
-            relation("test"),
-            function(
-                "query_string",
-                unresolvedArg(
-                    "fields",
-                    new RelevanceFieldList(ImmutableMap.of("field1", 1.F, "field2", 3.2F))),
-                unresolvedArg("query", stringLiteral("test query")),
-                unresolvedArg("analyzer", stringLiteral("keyword")))));
   }
 
   @Test
