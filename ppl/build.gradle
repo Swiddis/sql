@@ -117,3 +117,7 @@ jacocoTestCoverageVerification {
     }
 }
 check.dependsOn jacocoTestCoverageVerification
+
+tasks.withType(com.autonomousapps.tasks.CodeSourceExploderTask) {
+    dependsOn('generateGrammarSource', 'generateTestGrammarSource')
+}

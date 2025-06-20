@@ -148,3 +148,7 @@ shadowJar {
     from sourceSets.main.output
     configurations = [project.configurations.runtimeClasspath]
 }
+
+tasks.withType(com.autonomousapps.tasks.CodeSourceExploderTask) {
+    dependsOn('generateGrammarSource', 'generateTestGrammarSource')
+}

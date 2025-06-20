@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+plugins {
+    id("com.autonomousapps.build-health") version "2.18.0"
+}
 
 rootProject.name = 'opensearch-sql'
 

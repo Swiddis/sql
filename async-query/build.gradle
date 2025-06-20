@@ -120,3 +120,7 @@ jacocoTestCoverageVerification {
 }
 check.dependsOn jacocoTestCoverageVerification
 jacocoTestCoverageVerification.dependsOn jacocoTestReport
+
+tasks.withType(com.autonomousapps.tasks.CodeSourceExploderTask) {
+    dependsOn('generateGrammarSource', 'generateTestGrammarSource')
+}
