@@ -3,6 +3,6 @@ repos:
     hooks:
       - id: spotless-check
         name: Spotless Check
-        entry: ./gradlew spotlessCheck
+        entry: bash -c 'files=$(echo "$@" | tr " " ","); ./gradlew spotlessCheck -PspotlessFiles="$files"' --
         language: system
-        pass_filenames: false
+        pass_filenames: true
