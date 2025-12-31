@@ -9,6 +9,7 @@ import org.opensearch.action.ActionType;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.common.inject.Inject;
+import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.sql.plugin.lookup.poc.LookupStoragePoc;
 import org.opensearch.sql.plugin.lookup.poc.model.StoreLookupRequest;
@@ -28,7 +29,11 @@ public class TransportStoreLookupAction
   public static final ActionType<StoreLookupResponse> ACTION_TYPE =
       new ActionType<>(NAME, StoreLookupResponse::new);
 
+  private static final String OPENDISTRO_SECURITY_USER_KEY = "_opendistro_security_user";
+  private static final String POC_DEFAULT_USER = "poc_user";
+
   private final LookupStoragePoc lookupStorage;
+  private final TransportService transportService;
 
   @Inject
   public TransportStoreLookupAction(
@@ -37,6 +42,30 @@ public class TransportStoreLookupAction
       LookupStoragePoc lookupStorage) {
     super(NAME, transportService, actionFilters, StoreLookupRequest::new);
     this.lookupStorage = lookupStorage;
+    this.transportService = transportService;
+  }
+
+  /**
+   * Extracts the username from security context. Returns a default user if security plugin is not
+   * installed (fail-open mode).
+   */
+  private String extractUsername() {
+    ThreadContext threadContext = transportService.getThreadPool().getThreadContext();
+    Object userObj = threadContext.getTransient(OPENDISTRO_SECURITY_USER_KEY);
+
+    if (userObj == null) {
+      // Fail-open mode: security plugin not installed
+      return POC_DEFAULT_USER;
+    }
+
+    try {
+      // Use reflection to get username from User object (security plugin may not be available at
+      // compile time)
+      return (String) userObj.getClass().getMethod("getName").invoke(userObj);
+    } catch (Exception e) {
+      // Fallback to toString or default if reflection fails
+      return POC_DEFAULT_USER;
+    }
   }
 
   @Override
@@ -45,9 +74,9 @@ public class TransportStoreLookupAction
 
     String lookupName = request.getLookupName();
 
-    // For POC: Simple owner = "poc_user"
-    // TODO: Get actual user from security context when integrating FGAC
-    String owner = "poc_user";
+    // Extract authenticated user from security context
+    // Falls back to POC_DEFAULT_USER if security plugin is not installed
+    String owner = extractUsername();
 
     // Store lookup using centralized storage methods
     lookupStorage.storeLookup(

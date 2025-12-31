@@ -450,6 +450,7 @@ task integTestWithSecurity(type: RestIntegTestTask) {
         includeTestsMatching 'org.opensearch.sql.security.CrossClusterSearchIT'
         includeTestsMatching 'org.opensearch.sql.security.PPLPermissionsIT'
         includeTestsMatching 'org.opensearch.sql.security.FGACIndexScanningIT'
+        includeTestsMatching 'org.opensearch.sql.security.LookupStorageSecurityIT'
     }
 }
 
