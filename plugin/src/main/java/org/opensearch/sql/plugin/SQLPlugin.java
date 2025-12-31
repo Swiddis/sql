@@ -94,6 +94,10 @@ import org.opensearch.sql.opensearch.setting.OpenSearchSettings;
 import org.opensearch.sql.opensearch.storage.OpenSearchDataSourceFactory;
 import org.opensearch.sql.opensearch.storage.script.CompoundedScriptEngine;
 import org.opensearch.sql.plugin.config.OpenSearchPluginModule;
+import org.opensearch.sql.plugin.lookup.poc.LookupStoragePoc;
+import org.opensearch.sql.plugin.lookup.poc.rest.RestLookupAction;
+import org.opensearch.sql.plugin.lookup.poc.transport.TransportGetLookupAction;
+import org.opensearch.sql.plugin.lookup.poc.transport.TransportStoreLookupAction;
 import org.opensearch.sql.plugin.rest.RestPPLQueryAction;
 import org.opensearch.sql.plugin.rest.RestPPLStatsAction;
 import org.opensearch.sql.plugin.rest.RestQuerySettingsAction;
@@ -138,6 +142,7 @@ public class SQLPlugin extends Plugin
   private DataSourceServiceImpl dataSourceService;
   private OpenSearchAsyncQueryScheduler asyncQueryScheduler;
   private Injector injector;
+  private LookupStoragePoc lookupStorage;
 
   public String name() {
     return "sql";
@@ -170,7 +175,8 @@ public class SQLPlugin extends Plugin
         new RestDataSourceQueryAction((OpenSearchSettings) pluginSettings),
         new RestAsyncQueryManagementAction((OpenSearchSettings) pluginSettings),
         new RestDirectQueryManagementAction((OpenSearchSettings) pluginSettings),
-        new RestDirectQueryResourcesManagementAction((OpenSearchSettings) pluginSettings));
+        new RestDirectQueryResourcesManagementAction((OpenSearchSettings) pluginSettings),
+        new RestLookupAction());
   }
 
   /** Register action and handler so that transportClient can find proxy for action. */
@@ -225,7 +231,10 @@ public class SQLPlugin extends Plugin
             new ActionType<>(
                 TransportWriteDirectQueryResourcesRequestAction.NAME,
                 WriteDirectQueryResourcesActionResponse::new),
-            TransportWriteDirectQueryResourcesRequestAction.class));
+            TransportWriteDirectQueryResourcesRequestAction.class),
+        new ActionHandler<>(
+            TransportStoreLookupAction.ACTION_TYPE, TransportStoreLookupAction.class),
+        new ActionHandler<>(TransportGetLookupAction.ACTION_TYPE, TransportGetLookupAction.class));
   }
 
   @Override
@@ -246,6 +255,41 @@ public class SQLPlugin extends Plugin
     this.client = (NodeClient) client;
     this.dataSourceService = createDataSourceService();
     dataSourceService.createDataSource(defaultOpenSearchDataSourceMetadata());
+
+    // Initialize lookup storage POC
+    this.lookupStorage = new LookupStoragePoc((NodeClient) client, clusterService);
+
+    // Schedule index creation to run after cluster is ready (with retry)
+    threadPool
+        .generic()
+        .execute(
+            () -> {
+              // Wait for cluster to be ready (up to 30 seconds)
+              for (int i = 0; i < 30; i++) {
+                try {
+                  if (clusterService.state() != null) {
+                    lookupStorage.initializeIndices();
+                    LOGGER.info("Lookup storage indices initialized successfully");
+                    return;
+                  }
+                } catch (AssertionError e) {
+                  // Cluster state not ready yet, wait and retry
+                } catch (Exception e) {
+                  LOGGER.error("Failed to initialize lookup indices", e);
+                  return;
+                }
+                try {
+                  Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  return;
+                }
+              }
+              LOGGER.warn(
+                  "Lookup storage indices not initialized - cluster state not ready after 30"
+                      + " seconds");
+            });
+
     LocalClusterState.state().setClusterService(clusterService);
     LocalClusterState.state().setPluginSettings((OpenSearchSettings) pluginSettings);
     LocalClusterState.state().setClient(client);
@@ -257,6 +301,7 @@ public class SQLPlugin extends Plugin
           b.bind(org.opensearch.sql.common.setting.Settings.class).toInstance(pluginSettings);
           b.bind(DataSourceService.class).toInstance(dataSourceService);
           b.bind(ClusterService.class).toInstance(clusterService);
+          b.bind(LookupStoragePoc.class).toInstance(lookupStorage);
         });
     modules.add(new AsyncExecutorServiceModule());
     modules.add(new DirectQueryModule());
@@ -290,7 +335,8 @@ public class SQLPlugin extends Plugin
         asyncQueryExecutorService,
         clusterManagerEventListener,
         pluginSettings,
-        directQueryExecutorService);
+        directQueryExecutorService,
+        lookupStorage);
   }
 
   @Override
