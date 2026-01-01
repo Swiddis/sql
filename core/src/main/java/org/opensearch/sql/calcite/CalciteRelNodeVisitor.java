@@ -1439,6 +1439,57 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     // get sourceOutputFields from top of stack which is used to build final output
     List<String> sourceFieldsNames = context.relBuilder.peek().getRowType().getFieldNames();
 
+    // POC: Check if this is a stored lookup (using naming convention)
+    // Production implementation would query LookupStoragePoc.getFromRegistry() for version
+    UnresolvedPlan originalLookupRelation = node.getLookupRelation();
+    if (originalLookupRelation instanceof Relation) {
+      Relation relation = (Relation) originalLookupRelation;
+      List<String> tableParts = relation.getTableQualifiedName().getParts();
+      if (!tableParts.isEmpty()) {
+        String tableName = tableParts.get(tableParts.size() - 1);
+
+        if (tableName.startsWith("__stored__")) {
+          // Extract the actual lookup name
+          String lookupName = tableName.substring("__stored__".length());
+
+          // POC: Build filtered relation to .sql_lookups_poc data index
+          // In production: would also filter by version from registry
+          org.opensearch.sql.ast.expression.QualifiedName dataIndexName =
+              new org.opensearch.sql.ast.expression.QualifiedName(".sql_lookups_poc");
+          Relation dataIndexRelation = new Relation(dataIndexName);
+
+          // Build filter: lookup_name = 'X'
+          org.opensearch.sql.ast.expression.Field lookupNameField =
+              new org.opensearch.sql.ast.expression.Field(
+                  new org.opensearch.sql.ast.expression.QualifiedName("lookup_name"));
+          org.opensearch.sql.ast.expression.Literal lookupNameLiteral =
+              new org.opensearch.sql.ast.expression.Literal(
+                  lookupName, org.opensearch.sql.ast.expression.DataType.STRING);
+          org.opensearch.sql.ast.expression.Compare filterCondition =
+              new org.opensearch.sql.ast.expression.Compare(
+                  "=", lookupNameField, lookupNameLiteral);
+
+          // Build filtered relation tree: Filter -> Relation
+          Filter filteredRelation = new Filter(filterCondition);
+          filteredRelation.attach(dataIndexRelation);
+
+          // Replace the lookup relation with our filtered relation
+          // We need to update the Lookup node's lookupRelation field
+          // Since Lookup is immutable, we create a new one with the same params but different
+          // relation
+          Lookup modifiedLookup =
+              new Lookup(
+                  filteredRelation, // Use filtered relation instead of original
+                  node.getMappingAliasMap(),
+                  node.getOutputStrategy(),
+                  node.getOutputAliasMap());
+
+          // Recursively visit the modified lookup node
+          return visitLookup(modifiedLookup, context);
+        }
+      }
+    }
+
     // 2. resolve lookup table
     analyze(node.getLookupRelation(), context);
 

@@ -110,9 +110,11 @@ public class LookupStoragePoc {
 
     try {
       String settings = getDataIndexSettings();
+      String mapping = getDataIndexMapping();
 
       CreateIndexRequest createIndexRequest = new CreateIndexRequest(DATA_INDEX_NAME);
       createIndexRequest.settings(settings, MediaTypeRegistry.JSON);
+      createIndexRequest.mapping(mapping, MediaTypeRegistry.JSON);
 
       CreateIndexResponse createIndexResponse;
       try (ThreadContext.StoredContext ignored =
@@ -169,6 +171,30 @@ public class LookupStoragePoc {
         + "    \"number_of_shards\": 1,\n"
         + "    \"number_of_replicas\": 1,\n"
         + "    \"auto_expand_replicas\": \"0-2\"\n"
+        + "  }\n"
+        + "}";
+  }
+
+  /**
+   * Get mapping for data index. Uses dynamic templates to map numeric fields as integer (not long)
+   * for better compatibility with typical use cases. Required fields: lookup_name (keyword),
+   * version (keyword).
+   */
+  private String getDataIndexMapping() {
+    return "{\n"
+        + "  \"dynamic_templates\": [\n"
+        + "    {\n"
+        + "      \"integers\": {\n"
+        + "        \"match_mapping_type\": \"long\",\n"
+        + "        \"mapping\": {\n"
+        + "          \"type\": \"integer\"\n"
+        + "        }\n"
+        + "      }\n"
+        + "    }\n"
+        + "  ],\n"
+        + "  \"properties\": {\n"
+        + "    \"lookup_name\": {\"type\": \"keyword\"},\n"
+        + "    \"version\": {\"type\": \"keyword\"}\n"
         + "  }\n"
         + "}";
   }
