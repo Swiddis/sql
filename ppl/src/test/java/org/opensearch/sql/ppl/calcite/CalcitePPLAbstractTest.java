@@ -63,7 +63,7 @@ public class CalcitePPLAbstractTest {
   public CalcitePPLAbstractTest(CalciteAssert.SchemaSpec... schemaSpecs) {
     this.config = config(schemaSpecs);
     this.dataSourceService = mock(DataSourceService.class);
-    this.planTransformer = new CalciteRelNodeVisitor(dataSourceService);
+    this.planTransformer = new CalciteRelNodeVisitor(dataSourceService, null);
     this.converter = new RelToSqlConverter(OpenSearchSparkSqlDialect.DEFAULT);
     this.settings = mock(Settings.class);
   }

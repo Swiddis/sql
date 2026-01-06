@@ -170,11 +170,13 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   private final CalciteRexNodeVisitor rexVisitor;
   private final CalciteAggCallVisitor aggVisitor;
   private final DataSourceService dataSourceService;
+  private final Object lookupStorage; // POC: LookupStoragePoc, avoid circular dependency
 
-  public CalciteRelNodeVisitor(DataSourceService dataSourceService) {
+  public CalciteRelNodeVisitor(DataSourceService dataSourceService, Object lookupStorage) {
     this.rexVisitor = new CalciteRexNodeVisitor(this);
     this.aggVisitor = new CalciteAggCallVisitor(rexVisitor);
     this.dataSourceService = dataSourceService;
+    this.lookupStorage = lookupStorage;
   }
 
   public RelNode analyze(UnresolvedPlan unresolved, CalcitePlanContext context) {
@@ -1452,6 +1454,40 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
           // Extract the actual lookup name
           String lookupName = tableName.substring("__stored__".length());
 
+          // POC: Query registry for schema - fetch LookupStoragePoc from static holder
+          Object lookupStorageInstance =
+              org.opensearch.sql.common.LookupStorageHolder.getLookupStorage();
+          System.err.println(
+              "DEBUG: lookupStorage is "
+                  + (lookupStorageInstance == null
+                      ? "null"
+                      : lookupStorageInstance.getClass().getName()));
+          if (lookupStorageInstance != null) {
+            try {
+              // Use reflection to call getSchemaFromRegistry to avoid circular dependency
+              Class<?> storageClass = lookupStorageInstance.getClass();
+              System.err.println("DEBUG: storageClass = " + storageClass.getName());
+              System.err.println("DEBUG: Looking for method getSchemaFromRegistry on class");
+              java.lang.reflect.Method method =
+                  storageClass.getMethod("getSchemaFromRegistry", String.class);
+              method.setAccessible(true);
+              System.err.println("DEBUG: Found method, invoking with lookupName=" + lookupName);
+              @SuppressWarnings("unchecked")
+              Map<String, String> schema =
+                  (Map<String, String>) method.invoke(lookupStorageInstance, lookupName);
+              System.err.println(
+                  "DEBUG: Schema loaded: " + (schema == null ? "null" : schema.keySet()));
+              if (schema != null) {
+                // Store schema in context for use during projection
+                context.setStoredLookupSchema(schema);
+              }
+            } catch (Exception e) {
+              // Log but continue - query may fail later if schema needed
+              System.err.println("Failed to load schema for lookup " + lookupName + ": " + e);
+              e.printStackTrace();
+            }
+          }
+
           // POC: Build filtered relation to .sql_lookups_poc data index
           // In production: would also filter by version from registry
           org.opensearch.sql.ast.expression.QualifiedName dataIndexName =
@@ -1493,8 +1529,42 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     // 2. resolve lookup table
     analyze(node.getLookupRelation(), context);
 
+    // POC: If this is a stored lookup (schema loaded from registry),
+    // build projection to expose fields from flat_object "data" field
+    Map<String, String> storedSchema = context.getStoredLookupSchema();
+    boolean isStoredLookup = (storedSchema != null && !storedSchema.isEmpty());
+    if (isStoredLookup) {
+      // This is a stored lookup - build synthetic projections from schema
+      List<RexNode> projections = new ArrayList<>();
+      List<String> projectedFieldNames = new ArrayList<>();
+
+      // Add each field from schema as data.fieldName -> fieldName
+      for (String fieldName : storedSchema.keySet()) {
+        // Reference the field as data.fieldName in flat_object
+        try {
+          RexNode fieldRef = context.relBuilder.field("data." + fieldName);
+          projections.add(fieldRef);
+          projectedFieldNames.add(fieldName);
+        } catch (Exception e) {
+          // If field reference fails, skip it
+          System.err.println("Failed to add field " + fieldName + ": " + e.getMessage());
+        }
+      }
+
+      // Only apply projection if we successfully added fields
+      if (!projections.isEmpty()) {
+        context.relBuilder.project(projections, projectedFieldNames);
+      }
+
+      // Clear schema from context to avoid affecting subsequent lookups
+      context.setStoredLookupSchema(null);
+    }
+
     // 3. Add projection for lookup table if needed
-    JoinAndLookupUtils.addProjectionIfNecessary(node, context);
+    // Skip for stored lookups - we already built the projection above
+    if (!isStoredLookup) {
+      JoinAndLookupUtils.addProjectionIfNecessary(node, context);
+    }
 
     // Get lookupColumns from top of stack (after above potential projection).
     List<String> lookupTableFieldNames = context.relBuilder.peek().getRowType().getFieldNames();

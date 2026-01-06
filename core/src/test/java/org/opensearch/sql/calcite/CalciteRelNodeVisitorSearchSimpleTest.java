@@ -28,7 +28,7 @@ public class CalciteRelNodeVisitorSearchSimpleTest {
 
   @BeforeEach
   public void setUp() {
-    visitor = new CalciteRelNodeVisitor(dataSourceService);
+    visitor = new CalciteRelNodeVisitor(dataSourceService, null);
   }
 
   @Test

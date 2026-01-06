@@ -135,7 +135,8 @@ public class LookupStoragePoc {
 
   /**
    * Get mapping for registry index. Fields: lookup_name (keyword), version (keyword), owner
-   * (keyword), updated_at (date)
+   * (keyword), updated_at (date), schema (object with enabled: false). Schema is stored as opaque
+   * JSON to track field types for flattened data field.
    */
   private String getRegistryMapping() {
     return "{\n"
@@ -143,7 +144,8 @@ public class LookupStoragePoc {
         + "    \"lookup_name\": {\"type\": \"keyword\"},\n"
         + "    \"version\": {\"type\": \"keyword\"},\n"
         + "    \"owner\": {\"type\": \"keyword\"},\n"
-        + "    \"updated_at\": {\"type\": \"date\"}\n"
+        + "    \"updated_at\": {\"type\": \"date\"},\n"
+        + "    \"schema\": {\"type\": \"object\", \"enabled\": false}\n"
         + "  }\n"
         + "}";
   }
@@ -176,25 +178,17 @@ public class LookupStoragePoc {
   }
 
   /**
-   * Get mapping for data index. Uses dynamic templates to map numeric fields as integer (not long)
-   * for better compatibility with typical use cases. Required fields: lookup_name (keyword),
-   * version (keyword).
+   * Get mapping for data index. Uses flat_object field type to avoid mapping explosion. flat_object
+   * stores all user data under a single mapping entry, preventing cluster state bloat. Schema is
+   * loaded from registry during query planning to determine available fields. Required fields:
+   * lookup_name (keyword), version (keyword), data (flat_object).
    */
   private String getDataIndexMapping() {
     return "{\n"
-        + "  \"dynamic_templates\": [\n"
-        + "    {\n"
-        + "      \"integers\": {\n"
-        + "        \"match_mapping_type\": \"long\",\n"
-        + "        \"mapping\": {\n"
-        + "          \"type\": \"integer\"\n"
-        + "        }\n"
-        + "      }\n"
-        + "    }\n"
-        + "  ],\n"
         + "  \"properties\": {\n"
         + "    \"lookup_name\": {\"type\": \"keyword\"},\n"
-        + "    \"version\": {\"type\": \"keyword\"}\n"
+        + "    \"version\": {\"type\": \"keyword\"},\n"
+        + "    \"data\": {\"type\": \"flat_object\"}\n"
         + "  }\n"
         + "}";
   }
@@ -251,17 +245,105 @@ public class LookupStoragePoc {
   }
 
   /**
-   * Store lookup data. This is a 3-step process: 1. Check if lookup exists (for seq_no) 2. Write
-   * data with lookup_name + version tags 3. Update registry with new version (using seq_no
-   * optimistic locking)
+   * Get lookup schema from registry synchronously. Used during query planning to determine
+   * available fields for stored lookups. Returns null if lookup not found. This method is accessed
+   * via reflection from CalciteRelNodeVisitor to avoid circular dependency.
    *
    * @param lookupName The lookup name
+   * @return Map of field name to type, or null if lookup doesn't exist
+   */
+  @SuppressWarnings("unchecked")
+  public Map<String, String> getSchemaFromRegistry(String lookupName) {
+    GetRequest getRequest = new GetRequest(REGISTRY_INDEX_NAME, lookupName);
+    try (ThreadContext.StoredContext ignored =
+        client.threadPool().getThreadContext().stashContext()) {
+      GetResponse response = client.get(getRequest).actionGet();
+      if (!response.isExists()) {
+        LOG.warn("Lookup {} not found in registry", lookupName);
+        return null;
+      }
+
+      Map<String, Object> source = response.getSourceAsMap();
+      Object schemaObj = source.get("schema");
+      if (schemaObj instanceof Map) {
+        return (Map<String, String>) schemaObj;
+      } else {
+        LOG.warn("Lookup {} has invalid schema format", lookupName);
+        return null;
+      }
+    } catch (Exception e) {
+      LOG.error("Failed to get schema for lookup {}", lookupName, e);
+      return null;
+    }
+  }
+
+  /**
+   * Type coercion helper for flattened field values. Flattened fields store all values as keywords
+   * (strings), so we need to convert them back to their proper types based on the schema.
+   *
+   * @param fieldName The field name
+   * @param value The string value from flattened field
+   * @param schema The schema mapping field names to types
+   * @return The value coerced to the proper type
+   * @throws IllegalArgumentException if type coercion fails
+   */
+  public static Object coerceFieldValue(
+      String fieldName, String value, Map<String, String> schema) {
+    if (value == null) {
+      return null;
+    }
+
+    String type = schema.get(fieldName);
+    if (type == null) {
+      // Field not in schema, return as string
+      LOG.warn("Field {} not found in schema, treating as string", fieldName);
+      return value;
+    }
+
+    try {
+      switch (type.toLowerCase()) {
+        case "integer":
+        case "int":
+          return Integer.parseInt(value);
+        case "long":
+          return Long.parseLong(value);
+        case "float":
+          return Float.parseFloat(value);
+        case "double":
+          return Double.parseDouble(value);
+        case "boolean":
+        case "bool":
+          return Boolean.parseBoolean(value);
+        case "string":
+        case "text":
+        case "keyword":
+          return value;
+        default:
+          LOG.warn("Unknown type {} for field {}, treating as string", type, fieldName);
+          return value;
+      }
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Failed to coerce field '%s' with value '%s' to type '%s'", fieldName, value, type),
+          e);
+    }
+  }
+
+  /**
+   * Store lookup data. This is a 3-step process: 1. Check if lookup exists (for seq_no) 2. Write
+   * data with lookup_name + version tags 3. Update registry with new version and schema (using
+   * seq_no optimistic locking)
+   *
+   * @param lookupName The lookup name
+   * @param schema Field type schema (e.g., {"id": "integer", "role": "string"})
    * @param data The data rows to store
    * @param owner The owner (for POC, just use a simple string; enhance with FGAC later)
    * @param listener Async callback with version UUID and row count
    */
   public void storeLookup(
       String lookupName,
+      Map<String, String> schema,
       List<Map<String, Object>> data,
       String owner,
       ActionListener<StoreLookupResult> listener) {
@@ -281,8 +363,9 @@ public class LookupStoragePoc {
                   data,
                   ActionListener.wrap(
                       rowCount -> {
-                        // Step 3: Update registry with new version
-                        updateRegistry(lookupName, version, owner, getResponse, rowCount, listener);
+                        // Step 3: Update registry with new version and schema
+                        updateRegistry(
+                            lookupName, version, owner, schema, getResponse, rowCount, listener);
                       },
                       listener::onFailure));
             },
@@ -290,8 +373,8 @@ public class LookupStoragePoc {
   }
 
   /**
-   * Write data to data index with lookup_name and version tags. ALWAYS adds lookup_name and version
-   * to every row.
+   * Write data to data index using flattened field. Nests all user data under "data" field to avoid
+   * mapping explosion. Only lookup_name and version are top-level fields.
    */
   private void writeData(
       String lookupName,
@@ -301,14 +384,15 @@ public class LookupStoragePoc {
 
     BulkRequest bulkRequest = new BulkRequest();
     for (Map<String, Object> row : data) {
-      // Create a copy to avoid modifying original data
-      Map<String, Object> docWithMetadata = new HashMap<>(row);
+      Map<String, Object> doc = new HashMap<>();
+      doc.put("lookup_name", lookupName);
+      doc.put("version", version);
 
-      // CRITICAL: Tag every row with lookup_name and version
-      docWithMetadata.put("lookup_name", lookupName);
-      docWithMetadata.put("version", version);
+      // CRITICAL: Nest entire row under "data" flattened field
+      // This prevents each user field from creating a mapping entry
+      doc.put("data", row);
 
-      IndexRequest indexRequest = new IndexRequest(DATA_INDEX_NAME).source(docWithMetadata);
+      IndexRequest indexRequest = new IndexRequest(DATA_INDEX_NAME).source(doc);
       bulkRequest.add(indexRequest);
     }
 
@@ -332,13 +416,14 @@ public class LookupStoragePoc {
   }
 
   /**
-   * Update registry with new version using seq_no optimistic locking. If concurrent update
-   * detected, returns conflict error.
+   * Update registry with new version and schema using seq_no optimistic locking. If concurrent
+   * update detected, returns conflict error.
    */
   private void updateRegistry(
       String lookupName,
       String version,
       String owner,
+      Map<String, String> schema,
       GetResponse existingDoc,
       int rowCount,
       ActionListener<StoreLookupResult> listener) {
@@ -348,6 +433,7 @@ public class LookupStoragePoc {
     registry.put("version", version);
     registry.put("owner", owner);
     registry.put("updated_at", Instant.now().toString());
+    registry.put("schema", schema);
 
     IndexRequest indexRequest =
         new IndexRequest(REGISTRY_INDEX_NAME)

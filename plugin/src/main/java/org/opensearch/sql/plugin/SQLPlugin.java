@@ -293,6 +293,7 @@ public class SQLPlugin extends Plugin
     LocalClusterState.state().setClusterService(clusterService);
     LocalClusterState.state().setPluginSettings((OpenSearchSettings) pluginSettings);
     LocalClusterState.state().setClient(client);
+    org.opensearch.sql.common.LookupStorageHolder.setLookupStorage(lookupStorage);
     ModulesBuilder modules = new ModulesBuilder();
     modules.add(new OpenSearchPluginModule());
     modules.add(

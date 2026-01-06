@@ -81,6 +81,7 @@ public class TransportStoreLookupAction
     // Store lookup using centralized storage methods
     lookupStorage.storeLookup(
         lookupName,
+        request.getSchema(),
         request.getData(),
         owner,
         ActionListener.wrap(

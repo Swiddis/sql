@@ -51,6 +51,9 @@ public class LocalClusterState {
 
   private OpenSearchSettings pluginSettings;
 
+  /** POC: Lookup storage instance for stored lookup queries */
+  private Object lookupStorage;
+
   /** Latest setting value for each registered key. Thread-safe is required. */
   private final Map<String, Object> latestSettings = new ConcurrentHashMap<>();
 
@@ -105,6 +108,24 @@ public class LocalClusterState {
                 latestSettings.put(setting.getKey(), newVal);
               });
     }
+  }
+
+  /**
+   * Sets the lookup storage instance for POC. Uses Object type to avoid circular dependency.
+   *
+   * @param lookupStorage The lookup storage instance (LookupStoragePoc)
+   */
+  public void setLookupStorage(Object lookupStorage) {
+    this.lookupStorage = lookupStorage;
+  }
+
+  /**
+   * Gets the lookup storage instance for POC. Returns null if not yet initialized.
+   *
+   * @return The lookup storage instance or null
+   */
+  public Object getLookupStorage() {
+    return lookupStorage;
   }
 
   /**

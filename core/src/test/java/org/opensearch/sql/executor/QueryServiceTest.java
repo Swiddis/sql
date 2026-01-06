@@ -106,7 +106,7 @@ class QueryServiceTest {
       lenient().when(settings.getSettingValue(Key.QUERY_BUCKET_SIZE)).thenReturn(1000);
       lenient().when(settings.getSettingValue(Key.CALCITE_ENGINE_ENABLED)).thenReturn(false);
 
-      queryService = new QueryService(analyzer, executionEngine, planner, null, settings);
+      queryService = new QueryService(analyzer, executionEngine, planner, null, settings, null);
     }
 
     Helper executeSuccess() {

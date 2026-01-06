@@ -62,9 +62,11 @@ public class QueryService {
   private final Planner planner;
   private DataSourceService dataSourceService;
   private Settings settings;
+  @Nullable private Object lookupStorage; // POC: LookupStoragePoc, avoid circular dependency
 
   @Getter(lazy = true)
-  private final CalciteRelNodeVisitor relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService);
+  private final CalciteRelNodeVisitor relNodeVisitor =
+      new CalciteRelNodeVisitor(dataSourceService, lookupStorage);
 
   /** Execute the {@link UnresolvedPlan}, using {@link ResponseListener} to get response.<br> */
   public void execute(

@@ -59,7 +59,7 @@ public class CalciteRexNodeVisitorTest {
 
   @BeforeEach
   public void setUpContext() {
-    relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService);
+    relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService, null);
     visitor = new CalciteRexNodeVisitor(relNodeVisitor);
     when(relBuilder.getRexBuilder()).thenReturn(rexBuilder);
     when(rexBuilder.getTypeFactory()).thenReturn(TYPE_FACTORY);

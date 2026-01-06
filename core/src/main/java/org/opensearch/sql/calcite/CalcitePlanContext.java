@@ -72,6 +72,9 @@ public class CalcitePlanContext {
   /** Whether we're currently inside a lambda context. */
   @Getter @Setter private boolean inLambdaContext = false;
 
+  /** POC: Schema for stored lookup currently being processed. Map of field name -> type. */
+  @Getter @Setter private Map<String, String> storedLookupSchema;
+
   private CalcitePlanContext(FrameworkConfig config, SysLimit sysLimit, QueryType queryType) {
     this.config = config;
     this.sysLimit = sysLimit;

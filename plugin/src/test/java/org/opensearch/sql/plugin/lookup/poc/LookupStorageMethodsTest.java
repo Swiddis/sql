@@ -57,6 +57,96 @@ public class LookupStorageMethodsTest {
     storage = new LookupStoragePoc(client, clusterService);
   }
 
+  // ==================== coerceFieldValue Tests ====================
+
+  @Test
+  public void testCoerceFieldValue_Integer() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("count", "integer");
+
+    Object result = LookupStoragePoc.coerceFieldValue("count", "42", schema);
+    assertTrue("Should return Integer", result instanceof Integer);
+    assertEquals(42, result);
+  }
+
+  @Test
+  public void testCoerceFieldValue_Long() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("bignum", "long");
+
+    Object result = LookupStoragePoc.coerceFieldValue("bignum", "9223372036854775807", schema);
+    assertTrue("Should return Long", result instanceof Long);
+    assertEquals(9223372036854775807L, result);
+  }
+
+  @Test
+  public void testCoerceFieldValue_Double() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("price", "double");
+
+    Object result = LookupStoragePoc.coerceFieldValue("price", "99.99", schema);
+    assertTrue("Should return Double", result instanceof Double);
+    assertEquals(99.99, (Double) result, 0.001);
+  }
+
+  @Test
+  public void testCoerceFieldValue_Boolean() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("active", "boolean");
+
+    Object result = LookupStoragePoc.coerceFieldValue("active", "true", schema);
+    assertTrue("Should return Boolean", result instanceof Boolean);
+    assertEquals(true, result);
+  }
+
+  @Test
+  public void testCoerceFieldValue_String() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("name", "string");
+
+    Object result = LookupStoragePoc.coerceFieldValue("name", "John Doe", schema);
+    assertTrue("Should return String", result instanceof String);
+    assertEquals("John Doe", result);
+  }
+
+  @Test
+  public void testCoerceFieldValue_NullValue() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("field", "integer");
+
+    Object result = LookupStoragePoc.coerceFieldValue("field", null, schema);
+    assertNull("Should return null for null input", result);
+  }
+
+  @Test
+  public void testCoerceFieldValue_FieldNotInSchema() {
+    Map<String, String> schema = new HashMap<>();
+    // Field "unknown" not in schema
+
+    Object result = LookupStoragePoc.coerceFieldValue("unknown", "value", schema);
+    assertTrue("Should return String for unknown field", result instanceof String);
+    assertEquals("value", result);
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testCoerceFieldValue_InvalidInteger() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("count", "integer");
+
+    LookupStoragePoc.coerceFieldValue("count", "not_a_number", schema);
+  }
+
+  @Test
+  public void testCoerceFieldValue_UnknownType() {
+    Map<String, String> schema = new HashMap<>();
+    schema.put("field", "custom_type");
+
+    // Should treat unknown types as string
+    Object result = LookupStoragePoc.coerceFieldValue("field", "value", schema);
+    assertTrue("Should return String for unknown type", result instanceof String);
+    assertEquals("value", result);
+  }
+
   // ==================== buildDataFilter Tests ====================
 
   @Test
@@ -166,9 +256,13 @@ public class LookupStorageMethodsTest {
     row1.put("field1", "value1");
     data.add(row1);
 
+    Map<String, String> schema = new HashMap<>();
+    schema.put("field1", "string");
+
     // When
     storage.storeLookup(
         "my_lookup",
+        schema,
         data,
         "test_owner",
         new ActionListener<>() {
@@ -239,9 +333,12 @@ public class LookupStorageMethodsTest {
     List<Map<String, Object>> data = new ArrayList<>();
     data.add(new HashMap<>());
 
+    Map<String, String> schema = new HashMap<>();
+
     // When
     storage.storeLookup(
         "my_lookup",
+        schema,
         data,
         "test_owner",
         new ActionListener<>() {
@@ -306,9 +403,12 @@ public class LookupStorageMethodsTest {
     List<Map<String, Object>> data = new ArrayList<>();
     data.add(new HashMap<>());
 
+    Map<String, String> schema = new HashMap<>();
+
     // When
     storage.storeLookup(
         "my_lookup",
+        schema,
         data,
         "test_owner",
         new ActionListener<>() {
@@ -358,9 +458,12 @@ public class LookupStorageMethodsTest {
     List<Map<String, Object>> data = new ArrayList<>();
     data.add(new HashMap<>());
 
+    Map<String, String> schema = new HashMap<>();
+
     // When
     storage.storeLookup(
         "my_lookup",
+        schema,
         data,
         "test_owner",
         new ActionListener<>() {
@@ -418,9 +521,13 @@ public class LookupStorageMethodsTest {
       data.add(row);
     }
 
+    Map<String, String> schema = new HashMap<>();
+    schema.put("field", "string");
+
     // When
     storage.storeLookup(
         "my_lookup",
+        schema,
         data,
         "test_owner",
         new ActionListener<>() {

@@ -10,6 +10,7 @@ import static org.opensearch.rest.RestRequest.Method.POST;
 
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -70,6 +71,9 @@ public class RestLookupAction extends BaseRestHandler {
   /**
    * Handle POST request to store lookup data. Request: POST
    * /_plugins/_ppl/_poc/lookup/{lookup_name} Body: { "data": [ {...}, {...} ] }
+   *
+   * <p>For POC, schema is inferred from the first data row. Production should accept explicit
+   * schema.
    */
   private RestChannelConsumer executeStoreLookup(RestRequest restRequest, NodeClient nodeClient)
       throws IOException {
@@ -96,13 +100,39 @@ public class RestLookupAction extends BaseRestHandler {
                   RestStatus.BAD_REQUEST, "data field is required and cannot be empty"));
     }
 
-    StoreLookupRequest request = new StoreLookupRequest(lookupName, data);
+    // POC: Infer schema from first row
+    // For production, accept explicit schema in request body
+    Map<String, String> schema = inferSchema(data.get(0));
+
+    StoreLookupRequest request = new StoreLookupRequest(lookupName, schema, data);
 
     return restChannel ->
         nodeClient.execute(
             TransportStoreLookupAction.ACTION_TYPE,
             request,
             new RestToXContentListener<>(restChannel));
+  }
+
+  /**
+   * Infer schema from a data row by examining field types. For POC, supports only integer and
+   * string types.
+   */
+  private Map<String, String> inferSchema(Map<String, Object> row) {
+    Map<String, String> schema = new HashMap<>();
+    for (Map.Entry<String, Object> entry : row.entrySet()) {
+      String fieldName = entry.getKey();
+      Object value = entry.getValue();
+
+      String type;
+      if (value instanceof Number) {
+        type = "integer"; // POC: treat all numbers as integers
+      } else {
+        type = "string"; // Default to string for other types
+      }
+
+      schema.put(fieldName, type);
+    }
+    return schema;
   }
 
   /**
