@@ -45,6 +45,13 @@ apply plugin: 'java'
 apply plugin: 'io.freefair.lombok'
 apply plugin: 'com.wiredforcode.spawn'
 
+// Pass through PPL query logger system property to all test tasks
+tasks.withType(Test) {
+    if (System.getProperty("ppl.query.logger.output") != null) {
+        systemProperty "ppl.query.logger.output", System.getProperty("ppl.query.logger.output")
+    }
+}
+
 // The next major version is only API compat w/ the last minor of the previous major.
 // baseVersion need to roll-froward accordingly, as new 2.x of OpenSearch being released.
 // See: https://github.com/opensearch-project/OpenSearch/issues/3615

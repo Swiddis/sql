@@ -54,9 +54,16 @@ public abstract class PPLIntegTestCase extends SQLIntegTestCase {
   }
 
   protected String executeQueryToString(String query) throws IOException {
-    Response response = client().performRequest(buildRequest(query, QUERY_API_ENDPOINT));
+    Request request = buildRequest(query, QUERY_API_ENDPOINT);
+    Response response = client().performRequest(request);
     Assert.assertEquals(200, response.getStatusLine().getStatusCode());
-    return getResponseBody(response, true);
+    String responseBody = getResponseBody(response, true);
+
+    // Log query and response if logging is enabled
+    org.opensearch.sql.util.PPLQueryLogger.getInstance()
+        .logQueryAndResponse(request, response, responseBody);
+
+    return responseBody;
   }
 
   /** Deprecated, use {@link #explainQueryYaml(String)} */
@@ -100,7 +107,13 @@ public abstract class PPLIntegTestCase extends SQLIntegTestCase {
             QUERY_API_ENDPOINT + String.format(Locale.ROOT, "?format=csv&sanitize=%b", sanitize));
     Response response = client().performRequest(request);
     Assert.assertEquals(200, response.getStatusLine().getStatusCode());
-    return getResponseBody(response, true);
+    String responseBody = getResponseBody(response, true);
+
+    // Log query and response if logging is enabled
+    org.opensearch.sql.util.PPLQueryLogger.getInstance()
+        .logQueryAndResponse(request, response, responseBody);
+
+    return responseBody;
   }
 
   protected String executeCsvQuery(String query) throws IOException {

@@ -1,0 +1,84 @@
+{
+  "description": "Index reference mapping from index names to their resource files",
+  "source": "Generated from SQLIntegTestCase.Index enum",
+  "indices": {
+    "opensearch-sql_test_index_time_data2": {
+      "enum_name": "TIME_TEST_DATA2",
+      "type": "time_data",
+      "mapping": "integ-test/src/test/resources/time_test_data_index_mapping.json",
+      "data": "src/test/resources/time_test_data2.json"
+    },
+    "orders": {
+      "enum_name": "TPCH_ORDERS",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/orders_index_mapping.json",
+      "data": "src/test/resources/tpch/data/orders.json"
+    },
+    "nation": {
+      "enum_name": "TPCH_NATION",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/nation_index_mapping.json",
+      "data": "src/test/resources/tpch/data/nation.json"
+    },
+    "region": {
+      "enum_name": "TPCH_REGION",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/region_index_mapping.json",
+      "data": "src/test/resources/tpch/data/region.json"
+    },
+    "lineitem": {
+      "enum_name": "TPCH_LINEITEM",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/lineitem_index_mapping.json",
+      "data": "src/test/resources/tpch/data/lineitem.json"
+    },
+    "partsupp": {
+      "enum_name": "TPCH_PARTSUPP",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/partsupp_index_mapping.json",
+      "data": "src/test/resources/tpch/data/partsupp.json"
+    },
+    "supplier": {
+      "enum_name": "TPCH_SUPPLIER",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/supplier_index_mapping.json",
+      "data": "src/test/resources/tpch/data/supplier.json"
+    },
+    "part": {
+      "enum_name": "TPCH_PART",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/part_index_mapping.json",
+      "data": "src/test/resources/tpch/data/part.json"
+    },
+    "customer": {
+      "enum_name": "TPCH_CUSTOMER",
+      "type": "tpch",
+      "mapping": "integ-test/src/test/resources/customer_index_mapping.json",
+      "data": "src/test/resources/tpch/data/customer.json"
+    },
+    "big5": {
+      "enum_name": "BIG5",
+      "type": "big5",
+      "mapping": "integ-test/src/test/resources/big5_index_mapping.json",
+      "data": "src/test/resources/big5/data/big5.json"
+    },
+    "hits": {
+      "enum_name": "CLICK_BENCH",
+      "type": "clickbench",
+      "mapping": "integ-test/src/test/resources/clickbench_index_mapping.json",
+      "data": "src/test/resources/clickbench/data/clickbench.json"
+    },
+    "opensearch-sql_test_index_time_data": {
+      "enum_name": "TIME_TEST_DATA",
+      "type": "time_data",
+      "mapping": "integ-test/src/test/resources/time_test_data_index_mapping.json",
+      "data": "src/test/resources/time_test_data.json"
+    },
+    "events_traffic": {
+      "enum_name": "EVENTS_TRAFFIC",
+      "type": "events_traffic",
+      "mapping": "integ-test/src/test/resources/events_traffic_index_mapping.json",
+      "data": "src/test/resources/events_traffic.json"
+    }
+  }
+}

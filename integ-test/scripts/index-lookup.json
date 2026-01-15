@@ -1,0 +1,42 @@
+{
+  "description": "Mapping of commonly used test indices to their resource files",
+  "note": "Paths are relative to the repository root. Data files are in NDJSON format.",
+  "indices": {
+    "opensearch-sql_test_index_account": {
+      "mapping": "integ-test/src/test/resources/mappings/account_index_mapping.json",
+      "data": "integ-test/src/test/resources/accounts.json",
+      "enum": "ACCOUNT"
+    },
+    "opensearch-sql_test_index_bank": {
+      "mapping": "defined in SQLIntegTestCase.getBankIndexMapping()",
+      "data": "integ-test/src/test/resources/bank.json",
+      "enum": "BANK"
+    },
+    "opensearch-sql_test_index_calcs": {
+      "mapping": "integ-test/src/test/resources/calcs_index_mappings.json",
+      "data": "integ-test/src/test/resources/calcs.json",
+      "enum": "CALCS"
+    },
+    "opensearch-sql_test_index_date": {
+      "mapping": "integ-test/src/test/resources/date_formats_index_mapping.json",
+      "data": "integ-test/src/test/resources/dates.json",
+      "enum": "DATE"
+    },
+    "opensearch-sql_test_index_datetime": {
+      "mapping": "integ-test/src/test/resources/datetime_index_mapping.json",
+      "data": "integ-test/src/test/resources/datetime.json",
+      "enum": "DATETIME"
+    },
+    "opensearch-sql_test_index_employee_nested": {
+      "mapping": "integ-test/src/test/resources/employee_nested_index_mapping.json",
+      "data": "integ-test/src/test/resources/employee_nested.json",
+      "enum": "EMPLOYEE_NESTED"
+    },
+    "events": {
+      "mapping": "inline in SQLIntegTestCase.Index.EVENTS",
+      "data": "integ-test/src/test/resources/events_test.json",
+      "enum": "EVENTS"
+    }
+  },
+  "usage": "Your test framework can read this file and use the index name from [data] section to lookup the mapping and data files."
+}
