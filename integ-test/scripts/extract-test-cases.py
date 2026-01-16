@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Convert PPL query logs (JSON Lines format) to TOML test case format.
+Convert PPL query logs (JSON Lines format) to JSON test case format.
 
 Usage:
     python3 extract-test-cases.py queries.jsonl output_dir/
 
-This script reads the query log file and generates individual TOML test case files.
-You'll need to manually add the [data] section with index mappings and data.
+This script reads the query log file and generates individual JSON test case files.
+You'll need to manually add the data section with index mappings and data.
 """
 
 import json
@@ -73,7 +73,7 @@ def extract_index_name(query):
 
 
 def process_log_entry(entry, output_dir, counter):
-    """Process a single log entry and create a TOML file."""
+    """Process a single log entry and create a JSON file."""
     query = entry.get("query", "")
 
     if not query:
@@ -84,7 +84,7 @@ def process_log_entry(entry, output_dir, counter):
 
     # Generate filename
     base_name = sanitize_filename(query)
-    filename = f"{counter:04d}_{base_name}.toml"
+    filename = f"{counter:04d}_{base_name}.json"
     output_path = output_dir / filename
 
     # Extract schema and data - they may be JSON strings
@@ -110,59 +110,26 @@ def process_log_entry(entry, output_dir, counter):
     types = infer_types_from_schema(schema)
     rows = convert_datarows_to_dict(datarows, schema)
 
-    # Build TOML content
-    toml_content = ""
+    # Build JSON structure
+    test_case = {
+        "data": {},
+        "query": {
+            "language": "ppl",
+            "query": query
+        },
+        "result": {
+            "types": types,
+            "rows": rows
+        }
+    }
 
-    # Add [data] section with index reference
+    # Add index name if detected
     if index_name:
-        toml_content += f"""[data]
-index = "{index_name}"
-
-"""
-    else:
-        toml_content += """# TODO: Could not detect index name from query
-# [data]
-# index = "index_name"
-
-"""
-
-    toml_content += f"""[query]
-language = "ppl"
-query = '''
-{query}
-'''
-
-[result]
-"""
-
-    # Add types
-    if types:
-        toml_content += "types = {\n"
-        for name, type_val in types.items():
-            toml_content += f'    "{name}" = "{type_val}",\n'
-        toml_content += "}\n"
-
-    # Add rows
-    toml_content += "rows = [\n"
-    for row in rows:
-        toml_content += "    {\n"
-        for key, value in row.items():
-            if value is None:
-                toml_content += f'        "{key}" = null,\n'
-            elif isinstance(value, str):
-                # Escape quotes in strings
-                escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-                toml_content += f'        "{key}" = "{escaped}",\n'
-            elif isinstance(value, bool):
-                toml_content += f'        "{key}" = {str(value).lower()},\n'
-            else:
-                toml_content += f'        "{key}" = {value},\n'
-        toml_content += "    },\n"
-    toml_content += "]\n"
+        test_case["data"]["index"] = index_name
 
     # Write file
     with open(output_path, 'w') as f:
-        f.write(toml_content)
+        json.dump(test_case, f, indent=2)
 
     print(f"Created: {filename}")
 
@@ -200,8 +167,8 @@ def main():
     print(f"\nProcessed {counter - 1} queries")
     print(f"Output directory: {output_dir}")
     print("\nNext steps:")
-    print("1. Review generated TOML files")
-    print("2. Add [data] sections with index mappings")
+    print("1. Review generated JSON files")
+    print("2. Add data sections with index mappings")
     print("3. Use index loading utils to capture actual index data")
 
 
