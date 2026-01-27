@@ -68,6 +68,7 @@ import org.opensearch.sql.opensearch.storage.scan.context.PushDownOperation;
 import org.opensearch.sql.opensearch.storage.scan.context.PushDownType;
 import org.opensearch.sql.opensearch.storage.scan.context.RareTopDigest;
 import org.opensearch.sql.opensearch.storage.scan.context.SortExprDigest;
+import org.opensearch.sql.opensearch.storage.scan.context.TermsFilterDigest;
 
 /** An abstract relational operator representing a scan of an OpenSearchIndex type. */
 @Getter
@@ -140,6 +141,13 @@ public abstract class AbstractCalciteIndexScan extends TableScan implements Alia
                           rowCount,
                           RelMdUtil.guessSelectivity(
                               ((FilterDigest) operation.digest()).condition()));
+                  case TERMS_FILTER -> {
+                    // Terms filter: estimate based on number of terms provided
+                    TermsFilterDigest digest = (TermsFilterDigest) operation.digest();
+                    // Rough estimate: selectivity = min(1.0, terms.size() / 1000)
+                    double selectivity = Math.min(1.0, digest.values().size() / 1000.0);
+                    yield NumberUtil.multiply(rowCount, selectivity);
+                  }
                   case LIMIT -> Math.min(rowCount, ((LimitDigest) operation.digest()).limit());
                   case RARE_TOP -> {
                     /** similar to {@link Aggregate#estimateRowCount(RelMetadataQuery)} */

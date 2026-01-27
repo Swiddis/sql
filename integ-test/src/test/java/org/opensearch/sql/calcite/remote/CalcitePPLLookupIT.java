@@ -576,4 +576,55 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
         rows(2, "b", "New York", "Desktop"),
         rows(3, "c", "Texas", "Tablet"));
   }
+
+  @Test
+  public void testDiscriminatorWithAdditionalFilters() throws IOException {
+    // Create a source index with more records
+    for (int i = 1; i <= 10; i++) {
+      Request sourceReq = new Request("PUT", "/request_logs/_doc/" + i + "?refresh=true");
+      sourceReq.setJsonEntity(
+          "{\"host_key\": " + (i % 3 + 1) + ", \"request_id\": \"req" + i + "\"}");
+      client().performRequest(sourceReq);
+    }
+
+    // Create lookup index with discriminated data
+    Request lookupReq = new Request("PUT", "/dim_lookup/_doc/1?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"host_key\": 1, \"service_name\": \"payment-service\", "
+            + "\"environment\": \"prod\", \"region\": \"us-east-1\"}");
+    client().performRequest(lookupReq);
+
+    lookupReq = new Request("PUT", "/dim_lookup/_doc/2?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"host_key\": 2, \"service_name\": \"auth-service\", "
+            + "\"environment\": \"dev\", \"region\": \"us-west-2\"}");
+    client().performRequest(lookupReq);
+
+    lookupReq = new Request("PUT", "/dim_lookup/_doc/3?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"host_key\": 3, \"service_name\": \"payment-service\", "
+            + "\"environment\": \"prod\", \"region\": \"eu-west-1\"}");
+    client().performRequest(lookupReq);
+
+    // This query should trigger our optimization rule:
+    // 1. Lookup with discriminator (dim_lookup.host)
+    // 2. Additional filters (service_name = "payment-service" AND environment = "prod")
+    // 3. Only 2 distinct host_keys match the filters (1 and 3)
+    // Our POC rule should detect this pattern
+    JSONObject result =
+        executeQuery(
+            "source = request_logs "
+                + "| lookup dim_lookup.host host_key append service_name, environment, region "
+                + "| where service_name = \"payment-service\" and environment = \"prod\" "
+                + "| head 10 "
+                + "| fields request_id, region");
+
+    System.out.println("Test result: " + result.toString(2));
+
+    // Verify we only get results for host_key 1 and 3
+    verifySchema(result, schema("request_id", "string"), schema("region", "string"));
+
+    // Should get requests with host_key 1 or 3 (7 total: 1,3,4,6,7,9,10)
+    verifyNumOfRows(result, 7);
+  }
 }

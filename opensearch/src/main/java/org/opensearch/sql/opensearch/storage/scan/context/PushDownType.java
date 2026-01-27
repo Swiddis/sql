@@ -15,7 +15,8 @@ public enum PushDownType {
   SCRIPT, // script in predicate
   SORT_AGG_METRICS, // convert composite aggregate to terms or multi-terms bucket aggregate
   RARE_TOP, // convert composite aggregate to nested aggregate
-  SORT_EXPR
+  SORT_EXPR,
+  TERMS_FILTER // terms query for join key pre-filtering optimization
   // HIGHLIGHT,
   // NESTED
 }
