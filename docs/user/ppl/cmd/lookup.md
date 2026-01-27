@@ -149,3 +149,66 @@ This query produces the same results as Example 1 (using `REPLACE`):
 | 1005 | Jane  | Scientist  | Canada  | 90000  | DATA       |
 +------+-------+------------+---------+--------+------------+
 ```
+
+## Discriminator-Based Lookups (POC)
+
+Discriminator-based lookups allow you to store multiple distinct datasets in a single lookup index and filter by a discriminant field. This is useful when you have many small lookup tables and want to avoid creating separate indices for each one.
+
+### Setup
+
+To use discriminator-based lookups, your lookup index must contain a special field called `_lookup` (keyword type) that identifies which dataset each document belongs to. For example:
+
+```json
+// Host dataset
+PUT /dim_data/_doc/1
+{"_lookup": "host", "key": 1, "host_name": "server-1", "region": "us-east-1"}
+
+PUT /dim_data/_doc/2
+{"_lookup": "host", "key": 2, "host_name": "server-2", "region": "us-west-2"}
+
+// Client dataset
+PUT /dim_data/_doc/3
+{"_lookup": "client", "key": 1, "client_region": "California", "device_type": "Mobile"}
+
+PUT /dim_data/_doc/4
+{"_lookup": "client", "key": 2, "client_region": "New York", "device_type": "Desktop"}
+```
+
+### Syntax
+
+Use dot notation to specify the discriminant:
+
+```syntax
+lookup <lookupIndex>.<discriminant> (<lookupMappingField> [as <sourceMappingField>])...
+```
+
+### Example: Host Lookup
+
+The following query looks up host information using the `host` discriminant:
+
+```ppl
+source = events
+  | lookup dim_data.host key append host_name, region
+  | fields key, event_type, host_name, region
+```
+
+This query automatically filters the lookup index to only match records where `_lookup = 'host'`, ignoring all client records.
+
+### Example: Client Lookup
+
+Similarly, you can look up client information using the `client` discriminant:
+
+```ppl
+source = events
+  | lookup dim_data.client key append client_region, device_type
+  | fields key, event_type, client_region, device_type
+```
+
+This query automatically filters to only match records where `_lookup = 'client'`, ignoring all host records.
+
+### Benefits
+
+- **Index Consolidation**: Store multiple small lookup tables in a single index
+- **Operational Simplicity**: Fewer indices to manage and maintain
+- **Performance**: Efficient filtering using the discriminant field
+- **Flexibility**: Easy to add new discriminated datasets without creating new indices

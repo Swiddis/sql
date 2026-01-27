@@ -493,4 +493,87 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
         rows(1004, "David", null, 0, null),
         rows(1005, "Jane", "Scientist", 90000, "DATA"));
   }
+
+  @Test
+  public void testDiscriminatorBasedLookup() throws IOException {
+    // Create a source index with keys
+    Request sourceReq = new Request("PUT", "/source_data/_doc/1?refresh=true");
+    sourceReq.setJsonEntity("{\"key\": 1, \"value\": \"a\"}");
+    client().performRequest(sourceReq);
+    sourceReq = new Request("PUT", "/source_data/_doc/2?refresh=true");
+    sourceReq.setJsonEntity("{\"key\": 2, \"value\": \"b\"}");
+    client().performRequest(sourceReq);
+    sourceReq = new Request("PUT", "/source_data/_doc/3?refresh=true");
+    sourceReq.setJsonEntity("{\"key\": 3, \"value\": \"c\"}");
+    client().performRequest(sourceReq);
+
+    // Create a combined lookup index with two discriminated datasets
+    // Host dataset (_lookup = "host")
+    Request lookupReq = new Request("PUT", "/dim_data/_doc/1?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"key\": 1, \"host_name\": \"server-1\", \"region\":"
+            + " \"us-east-1\"}");
+    client().performRequest(lookupReq);
+    lookupReq = new Request("PUT", "/dim_data/_doc/2?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"key\": 2, \"host_name\": \"server-2\", \"region\":"
+            + " \"us-west-2\"}");
+    client().performRequest(lookupReq);
+    lookupReq = new Request("PUT", "/dim_data/_doc/3?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"host\", \"key\": 3, \"host_name\": \"server-3\", \"region\":"
+            + " \"eu-west-1\"}");
+    client().performRequest(lookupReq);
+
+    // Client dataset (_lookup = "client")
+    lookupReq = new Request("PUT", "/dim_data/_doc/4?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"client\", \"key\": 1, \"client_region\": \"California\", \"device_type\":"
+            + " \"Mobile\"}");
+    client().performRequest(lookupReq);
+    lookupReq = new Request("PUT", "/dim_data/_doc/5?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"client\", \"key\": 2, \"client_region\": \"New York\", \"device_type\":"
+            + " \"Desktop\"}");
+    client().performRequest(lookupReq);
+    lookupReq = new Request("PUT", "/dim_data/_doc/6?refresh=true");
+    lookupReq.setJsonEntity(
+        "{\"_lookup\": \"client\", \"key\": 3, \"client_region\": \"Texas\", \"device_type\":"
+            + " \"Tablet\"}");
+    client().performRequest(lookupReq);
+
+    // Test lookup with "host" discriminator - should only get host data
+    JSONObject result =
+        executeQuery(
+            "source = source_data | LOOKUP dim_data.host key APPEND host_name, region"
+                + "| fields key, value, host_name, region");
+    verifySchema(
+        result,
+        schema("key", "int"),
+        schema("value", "string"),
+        schema("host_name", "string"),
+        schema("region", "string"));
+    verifyDataRows(
+        result,
+        rows(1, "a", "server-1", "us-east-1"),
+        rows(2, "b", "server-2", "us-west-2"),
+        rows(3, "c", "server-3", "eu-west-1"));
+
+    // Test lookup with "client" discriminator - should only get client data
+    result =
+        executeQuery(
+            "source = source_data | LOOKUP dim_data.client key APPEND client_region, device_type"
+                + "| fields key, value, client_region, device_type");
+    verifySchema(
+        result,
+        schema("key", "int"),
+        schema("value", "string"),
+        schema("client_region", "string"),
+        schema("device_type", "string"));
+    verifyDataRows(
+        result,
+        rows(1, "a", "California", "Mobile"),
+        rows(2, "b", "New York", "Desktop"),
+        rows(3, "c", "Texas", "Tablet"));
+  }
 }

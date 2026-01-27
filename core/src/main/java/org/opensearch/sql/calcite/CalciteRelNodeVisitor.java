@@ -1576,6 +1576,17 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     // 2. resolve lookup table
     analyze(node.getLookupRelation(), context);
 
+    // 2a. Add discriminant filter if present (POC: hardcoded to "_lookup" field)
+    if (node.getDiscriminant() != null) {
+      String lookupFieldName = "_lookup"; // Hardcoded for proof-of-concept
+      RexNode discriminantFilter =
+          context.rexBuilder.makeCall(
+              SqlStdOperatorTable.EQUALS,
+              context.relBuilder.field(lookupFieldName),
+              context.rexBuilder.makeLiteral(node.getDiscriminant()));
+      context.relBuilder.filter(discriminantFilter);
+    }
+
     // 3. Add projection for lookup table if needed
     JoinAndLookupUtils.addProjectionIfNecessary(node, context);
 

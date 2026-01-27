@@ -987,7 +987,23 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
   /** Lookup command */
   @Override
   public UnresolvedPlan visitLookupCommand(OpenSearchPPLParser.LookupCommandContext ctx) {
-    Relation lookupRelation = new Relation(this.internalVisitExpression(ctx.tableSource()));
+    UnresolvedExpression tableExpr = this.internalVisitExpression(ctx.tableSource());
+
+    // Extract discriminant if table name is qualified (e.g., "dim_data.host")
+    String discriminant = null;
+    UnresolvedExpression lookupTableExpr = tableExpr;
+
+    if (tableExpr instanceof QualifiedName) {
+      QualifiedName qualifiedName = (QualifiedName) tableExpr;
+      if (qualifiedName.getParts().size() > 1) {
+        // Extract discriminant as the last part (e.g., "host" from "dim_data.host")
+        discriminant = qualifiedName.getSuffix();
+        // Use prefix as the actual table name (e.g., "dim_data")
+        lookupTableExpr = qualifiedName.getPrefix().orElse(qualifiedName);
+      }
+    }
+
+    Relation lookupRelation = new Relation(lookupTableExpr);
     // OUTPUT and REPLACE are synonyms - both overwrite existing fields
     Lookup.OutputStrategy strategy =
         ctx.APPEND() != null ? Lookup.OutputStrategy.APPEND : Lookup.OutputStrategy.REPLACE;
@@ -997,7 +1013,7 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
         ctx.outputCandidateList() == null
             ? emptyMap()
             : buildFieldAliasMap(ctx.outputCandidateList().lookupPair());
-    return new Lookup(lookupRelation, mappingAliasMap, strategy, outputAliasMap);
+    return new Lookup(lookupRelation, mappingAliasMap, strategy, outputAliasMap, discriminant);
   }
 
   private java.util.Map<String, String> buildFieldAliasMap(

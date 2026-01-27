@@ -8,6 +8,7 @@ package org.opensearch.sql.ast.tree;
 import com.google.common.collect.ImmutableList;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nullable;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,12 @@ public class Lookup extends UnresolvedPlan {
    * #mappingAliasMap}
    */
   private final Map<String, String> outputAliasMap;
+
+  /**
+   * Optional discriminant for filtering lookup data. For example, in "lookup dim_data.host key",
+   * the discriminant is "host".
+   */
+  @Nullable private final String discriminant;
 
   @Override
   public UnresolvedPlan attach(UnresolvedPlan child) {
