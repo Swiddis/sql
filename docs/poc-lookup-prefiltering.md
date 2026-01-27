@@ -39,15 +39,19 @@ If the filtered lookup returns a small set of distinct join keys:
 
 ### ⏳ Remaining Work
 
-4. **Pre-execution & Transformation** (`sql-nrr`)
-   - Implement `LookupPreFilterRule.onMatch()`:
-     - Estimate cardinality of lookup result
-     - If < threshold (100), pre-execute lookup scan
-     - Extract distinct join key values
-     - Create `TermsFilterDigest` with values
-     - Inject into left scan's `PushDownContext`
-     - Build terms query in `OpenSearchRequestBuilder`
-     - Return transformed plan
+4. **Pre-execution & Transformation** (`sql-nrr`) - ✅ PARTIALLY COMPLETE
+   - ✅ Implemented `LookupPreFilterRule.onMatch()`:
+     - ✅ Extract join key field names from join condition
+     - ✅ Estimate cardinality of lookup result using RelMetadataQuery
+     - ✅ Check if cardinality < threshold (100)
+     - ✅ Create `TermsFilterDigest` and inject into left scan's `PushDownContext`
+     - ✅ Return transformed plan with optimized left scan
+   - ⏳ TODO: Implement actual pre-execution of right scan to extract join key values
+     - Currently uses empty placeholder list for join key values
+     - Need to execute right scan during planning phase (architectural challenge)
+   - ⏳ TODO: Implement `pushDownTermsFilter` in `OpenSearchRequestBuilder`
+     - Currently has placeholder action that logs but doesn't push down
+     - Need to build OpenSearch terms query from TermsFilterDigest
 
 ## Key Files
 
@@ -106,6 +110,53 @@ If the filtered lookup returns a small set of distinct join keys:
    - Correct results returned
    - Performance improvement (compare explain plans)
 
+## Implementation Notes (sql-nrr)
+
+### What Was Implemented
+
+The `LookupPreFilterRule.onMatch()` method now implements the transformation logic:
+
+1. **Join Key Extraction**: Parses the join condition (e.g., `$0 = $1`) to extract:
+   - Left join key field name (e.g., "host_key" from request_logs)
+   - Right join key field name (e.g., "host_key" from dim_lookup)
+   - Handles both orderings (left = right or right = left)
+
+2. **Cardinality Estimation**: Uses `RelMetadataQuery.getRowCount(rightScan)` to estimate how many rows the filtered lookup will return. Skips optimization if > 100 rows.
+
+3. **Plan Transformation**: Creates a new left scan with a `TermsFilterDigest` pushed down:
+   ```java
+   newLeftScan.getPushDownContext().add(
+       PushDownType.TERMS_FILTER,
+       new TermsFilterDigest(leftJoinKeyField, joinKeyValues),
+       (OSRequestBuilderAction) requestBuilder -> { ... }
+   );
+   ```
+
+4. **Transformed Join**: Returns a new join with the optimized left scan.
+
+### What Still Needs Implementation
+
+1. **Pre-execution During Planning** (Architectural Challenge):
+   - Currently, `joinKeyValues` is an empty placeholder list
+   - Need to actually execute the right scan during planning to extract distinct join key values
+   - This is non-trivial because:
+     - Planning phase normally doesn't execute queries
+     - Need access to OpenSearch client during planning
+     - Need to materialize and deduplicate join keys
+
+2. **OpenSearchRequestBuilder Integration**:
+   - Need to implement the actual terms query push-down
+   - The action currently just logs; needs to call:
+     ```java
+     requestBuilder.pushDownFilterForCalcite(
+         QueryBuilders.termsQuery(fieldName, joinKeyValues)
+     );
+     ```
+
+3. **Integration Testing**:
+   - The test `testDiscriminatorWithAdditionalFilters` exists but needs OpenSearch cluster
+   - Need to verify the rule triggers and produces correct results
+
 ## Design Decisions
 
 ### When to Apply
@@ -124,3 +175,4 @@ If pre-execution fails or cardinality too high:
 - Multi-column join keys support
 - Batch multiple terms queries for large key sets
 - Statistics collection for better estimates
+- Actual pre-execution during planning (see architectural challenge above)
