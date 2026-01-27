@@ -608,14 +608,14 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
 
     // This query should trigger our optimization rule:
     // 1. Lookup with discriminator (dim_lookup.host)
-    // 2. Additional filters (service_name = "payment-service" AND environment = "prod")
+    // 2. Additional filters (service_name = 'payment-service' AND environment = 'prod')
     // 3. Only 2 distinct host_keys match the filters (1 and 3)
     // Our POC rule should detect this pattern
     JSONObject result =
         executeQuery(
             "source = request_logs "
                 + "| lookup dim_lookup.host host_key append service_name, environment, region "
-                + "| where service_name = \"payment-service\" and environment = \"prod\" "
+                + "| where service_name = 'payment-service' and environment = 'prod' "
                 + "| head 10 "
                 + "| fields request_id, region");
 
@@ -624,7 +624,9 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
     // Verify we only get results for host_key 1 and 3
     verifySchema(result, schema("request_id", "string"), schema("region", "string"));
 
-    // Should get requests with host_key 1 or 3 (7 total: 1,3,4,6,7,9,10)
-    verifyNumOfRows(result, 7);
+    // Should get requests with host_key 1 or 3 (6 total: records 2,3,5,6,8,9)
+    // host_key 1: records 3,6,9 (3 rows)
+    // host_key 3: records 2,5,8 (3 rows)
+    verifyNumOfRows(result, 6);
   }
 }
