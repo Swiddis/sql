@@ -8,7 +8,11 @@ package org.opensearch.sql.opensearch.planner.rules;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import lombok.EqualsAndHashCode;
+import lombok.RequiredArgsConstructor;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.rel.core.Join;
@@ -42,7 +46,29 @@ public class LookupPreFilterRule extends RelOptRule {
   private static final Logger LOG = LogManager.getLogger(LookupPreFilterRule.class);
   public static final LookupPreFilterRule INSTANCE = new LookupPreFilterRule();
 
-  private static final int MAX_TERMS_FOR_OPTIMIZATION = 100;
+  private static final int MAX_TERMS_FOR_OPTIMIZATION = 10000;
+
+  /**
+   * Cache for pre-executed scan results. Keys are based on the scan's digest (which includes index,
+   * filters, and all push-down operations) and the join key field. This avoids redundant scan
+   * execution when the planner explores multiple alternative plans.
+   */
+  private final Map<PreExecutionCacheKey, List<Object>> preExecutionCache =
+      new ConcurrentHashMap<>();
+
+  /** Cache key for pre-execution results based on stable scan characteristics. */
+  @RequiredArgsConstructor
+  @EqualsAndHashCode
+  private static class PreExecutionCacheKey {
+    /** Table qualified name (e.g., "catalog.schema.table") */
+    private final String tableName;
+
+    /** Hash of push-down context to detect different filter/projection combinations */
+    private final int pushDownContextHash;
+
+    /** Join key field name */
+    private final String joinKeyField;
+  }
 
   private LookupPreFilterRule() {
     super(
@@ -62,6 +88,16 @@ public class LookupPreFilterRule extends RelOptRule {
     // Only optimize LEFT joins
     if (join.getJoinType() != JoinRelType.LEFT) {
       return false;
+    }
+
+    // Skip if left scan already has a terms filter (already optimized)
+    PushDownContext leftContext = leftScan.getPushDownContext();
+    if (leftContext != null) {
+      boolean hasTermsFilter =
+          leftContext.stream().anyMatch(op -> op.type() == PushDownType.TERMS_FILTER);
+      if (hasTermsFilter) {
+        return false;
+      }
     }
 
     // Check if right side (lookup) has filters
@@ -153,18 +189,45 @@ public class LookupPreFilterRule extends RelOptRule {
         rightJoinKeyField,
         rightRowCount);
 
-    // Pre-execute the right scan to extract distinct join key values
-    List<Object> joinKeyValues;
-    try {
-      joinKeyValues = preExecuteAndExtractJoinKeys(rightScan, rightJoinKeyField);
+    // Create cache key for this scan using stable characteristics
+    String tableName = rightScan.getTable().getQualifiedName().toString();
+    // Use toString of push-down context for a stable hash across equivalent scans
+    int contextHash = rightScan.getPushDownContext().toString().hashCode();
+    PreExecutionCacheKey cacheKey =
+        new PreExecutionCacheKey(tableName, contextHash, rightJoinKeyField);
+
+    LOG.info(
+        "[LookupPreFilterRule] Cache key: table={}, contextHash={}, field={}, cache size: {}",
+        tableName,
+        contextHash,
+        rightJoinKeyField,
+        preExecutionCache.size());
+
+    // Check cache first to avoid redundant execution
+    List<Object> cachedValues = preExecutionCache.get(cacheKey);
+
+    final List<Object> joinKeyValues;
+    if (cachedValues != null) {
       LOG.info(
-          "[LookupPreFilterRule] Pre-executed lookup scan, extracted {} distinct join key values",
-          joinKeyValues.size());
-    } catch (Exception e) {
-      LOG.warn(
-          "[LookupPreFilterRule] Failed to pre-execute right scan, skipping optimization: {}",
-          e.getMessage());
-      return;
+          "[LookupPreFilterRule] Using cached join key values ({} values)", cachedValues.size());
+      joinKeyValues = cachedValues;
+    } else {
+      // Pre-execute the right scan to extract distinct join key values
+      try {
+        List<Object> extractedValues = preExecuteAndExtractJoinKeys(rightScan, rightJoinKeyField);
+        LOG.info(
+            "[LookupPreFilterRule] Pre-executed lookup scan, extracted {} distinct join key values",
+            extractedValues.size());
+
+        // Store in cache for subsequent rule applications
+        preExecutionCache.put(cacheKey, extractedValues);
+        joinKeyValues = extractedValues;
+      } catch (Exception e) {
+        LOG.warn(
+            "[LookupPreFilterRule] Failed to pre-execute right scan, skipping optimization: {}",
+            e.getMessage());
+        return;
+      }
     }
 
     // Skip optimization if no join keys found
