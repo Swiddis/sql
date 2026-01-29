@@ -21,6 +21,8 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.index.query.QueryBuilders;
+import org.opensearch.sql.data.type.ExprType;
+import org.opensearch.sql.opensearch.data.type.OpenSearchTextType;
 import org.opensearch.sql.opensearch.request.OpenSearchRequest;
 import org.opensearch.sql.opensearch.request.OpenSearchRequestBuilder;
 import org.opensearch.sql.opensearch.storage.OpenSearchIndex;
@@ -42,7 +44,7 @@ public class LookupPreFilterRule extends RelOptRule {
   private static final Logger LOG = LogManager.getLogger(LookupPreFilterRule.class);
   public static final LookupPreFilterRule INSTANCE = new LookupPreFilterRule();
 
-  private static final int MAX_TERMS_FOR_OPTIMIZATION = 100;
+  private static final int MAX_TERMS_FOR_OPTIMIZATION = 100000;
 
   private LookupPreFilterRule() {
     super(
@@ -70,7 +72,9 @@ public class LookupPreFilterRule extends RelOptRule {
       return false;
     }
 
-    // Skip if left scan already has a terms filter (already optimized)
+    // Skip if left scan already has a terms filter (prevents infinite loop)
+    // After we apply the optimization, the transformed plan would still match this rule's pattern,
+    // so we need to check if we've already optimized this join
     PushDownContext leftContext = leftScan.getPushDownContext();
     if (leftContext != null) {
       boolean hasTermsFilter =
@@ -104,6 +108,10 @@ public class LookupPreFilterRule extends RelOptRule {
     Join join = call.rel(0);
     CalciteLogicalIndexScan leftScan = call.rel(1);
     CalciteLogicalIndexScan rightScan = call.rel(2);
+
+    LOG.info("[LookupPreFilterRule] Rule matched, analyzing join optimization opportunity");
+    LOG.info("[LookupPreFilterRule] Left scan: {}", leftScan.getTable().getQualifiedName());
+    LOG.info("[LookupPreFilterRule] Right scan: {}", rightScan.getTable().getQualifiedName());
 
     // Extract join key field information
     RexCall joinCondition = (RexCall) join.getCondition();
@@ -157,11 +165,13 @@ public class LookupPreFilterRule extends RelOptRule {
     }
 
     LOG.info(
-        "[LookupPreFilterRule] Applying optimization: join keys: left={}, right={}, estimated"
-            + " lookup cardinality={}",
+        "[LookupPreFilterRule] Estimated lookup cardinality: {} (threshold: {})",
+        rightRowCount,
+        MAX_TERMS_FOR_OPTIMIZATION);
+    LOG.info(
+        "[LookupPreFilterRule] Applying optimization: join keys: left={}, right={}",
         leftJoinKeyField,
-        rightJoinKeyField,
-        rightRowCount);
+        rightJoinKeyField);
 
     // Pre-execute the right scan to extract distinct join key values
     List<Object> joinKeyValues;
@@ -183,6 +193,18 @@ public class LookupPreFilterRule extends RelOptRule {
       return;
     }
 
+    // Get field type and convert text fields to keyword for terms query
+    OpenSearchIndex leftOsIndex = leftScan.getOsIndex();
+    ExprType leftFieldType = leftOsIndex.getFieldOpenSearchTypes().get(leftJoinKeyField);
+    String termsQueryField =
+        OpenSearchTextType.convertTextToKeyword(leftJoinKeyField, leftFieldType);
+
+    LOG.info(
+        "[LookupPreFilterRule] Field type for {}: {}, using field: {} for terms query",
+        leftJoinKeyField,
+        leftFieldType,
+        termsQueryField);
+
     // Create new left scan with terms filter injected
     CalciteLogicalIndexScan newLeftScan = leftScan.copy();
     newLeftScan
@@ -194,10 +216,10 @@ public class LookupPreFilterRule extends RelOptRule {
                 requestBuilder -> {
                   // Push down terms query to OpenSearch
                   requestBuilder.pushDownFilterForCalcite(
-                      QueryBuilders.termsQuery(leftJoinKeyField, joinKeyValues));
+                      QueryBuilders.termsQuery(termsQueryField, joinKeyValues));
                   LOG.debug(
                       "Pushed down terms filter for field: {} with {} values",
-                      leftJoinKeyField,
+                      termsQueryField,
                       joinKeyValues.size());
                 });
 
@@ -224,9 +246,16 @@ public class LookupPreFilterRule extends RelOptRule {
    */
   private List<Object> preExecuteAndExtractJoinKeys(
       CalciteLogicalIndexScan rightScan, String joinKeyField) {
+    LOG.info("[LookupPreFilterRule] Pre-executing lookup scan to extract join keys");
+    LOG.info("[LookupPreFilterRule] Join key field: {}", joinKeyField);
+    LOG.info("[LookupPreFilterRule] Right scan row type: {}", rightScan.getRowType());
+
     // Get the OpenSearch index and create request builder
     OpenSearchIndex osIndex = rightScan.getOsIndex();
     PushDownContext pushDownContext = rightScan.getPushDownContext();
+
+    LOG.info("[LookupPreFilterRule] PushDownContext operations: {}", pushDownContext);
+
     OpenSearchRequestBuilder requestBuilder = pushDownContext.createRequestBuilder();
 
     // Build the request with only the join key field for efficiency
@@ -245,9 +274,14 @@ public class LookupPreFilterRule extends RelOptRule {
 
     // Collect distinct join key values
     Set<Object> distinctKeys = new HashSet<>();
+    int rowCount = 0;
     try {
       while (enumerator.moveNext()) {
         Object keyValue = enumerator.current();
+        rowCount++;
+
+        LOG.debug("[LookupPreFilterRule] Row {}: key value = {}", rowCount, keyValue);
+
         // Filter out null values
         if (keyValue != null) {
           distinctKeys.add(keyValue);
@@ -263,6 +297,12 @@ public class LookupPreFilterRule extends RelOptRule {
     } finally {
       enumerator.close();
     }
+
+    LOG.info(
+        "[LookupPreFilterRule] Pre-execution complete: {} rows processed, {} distinct keys found",
+        rowCount,
+        distinctKeys.size());
+    LOG.info("[LookupPreFilterRule] Distinct keys: {}", distinctKeys);
 
     return new ArrayList<>(distinctKeys);
   }

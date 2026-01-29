@@ -549,7 +549,7 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
                 + "| fields key, value, host_name, region");
     verifySchema(
         result,
-        schema("key", "int"),
+        schema("key", "bigint"),
         schema("value", "string"),
         schema("host_name", "string"),
         schema("region", "string"));
@@ -566,7 +566,7 @@ public class CalcitePPLLookupIT extends PPLIntegTestCase {
                 + "| fields key, value, client_region, device_type");
     verifySchema(
         result,
-        schema("key", "int"),
+        schema("key", "bigint"),
         schema("value", "string"),
         schema("client_region", "string"),
         schema("device_type", "string"));
