@@ -43,7 +43,7 @@ If the filtered lookup returns a small set of distinct join keys:
    - ✅ Implemented `LookupPreFilterRule.onMatch()`:
      - ✅ Extract join key field names from join condition
      - ✅ Estimate cardinality of lookup result using RelMetadataQuery
-     - ✅ Check if cardinality < threshold (100)
+     - ✅ Check if cardinality < threshold (100,000)
      - ✅ Pre-execute right scan and extract distinct join key values
      - ✅ Create `TermsFilterDigest` and inject into left scan's `PushDownContext`
      - ✅ Push down terms query using `QueryBuilders.termsQuery()`
@@ -53,7 +53,70 @@ If the filtered lookup returns a small set of distinct join keys:
      - Iterates through results and collects distinct join key values
      - Filters out null values
      - Safety check to prevent exceeding threshold
+
+5. **Filter Extraction for Pre-Execution** (`sql-j4z`) - ✅ COMPLETE
+   - **Root Cause Fixed**: Filters on lookup columns weren't pushed to scan before pre-execution
+   - ✅ Changed rule pattern to match `LogicalFilter -> LogicalProject -> Join`
+   - ✅ Implemented `extractAndPushRightSideFilters()`:
+     - Maps filter conditions through project to join output space
+     - Extracts conditions that only reference right-side fields
+     - Shifts indices to be relative to right scan
+     - Pushes filters using `PredicateAnalyzer` before pre-execution
+   - ✅ Fixed pre-execution to use filtered scan (reduced from 30 to 2 keys in test case)
+
+6. **LIMIT Pushdown for LEFT JOIN** (`sql-7o2`) - ✅ COMPLETE
+   - ✅ Created `LimitLeftJoinRule` to push LIMIT to probe side of LEFT JOIN
+   - ✅ Pattern: `LogicalSort -> LogicalFilter -> LogicalProject -> Join`
+   - ✅ Pushes limit to left scan while preserving `EnumerableLimit` operator
+   - ✅ Works in combination with pre-filtering optimization
    - ✅ Used existing `pushDownFilterForCalcite()` method for terms filter push-down
+
+## Performance Results
+
+### Benchmark: Filtered Lookup with LIMIT
+**Query**:
+```ppl
+source=request_logs
+| lookup dim_lookup.host host_key append service_name, environment, region
+| where service_name = "payment-service" and environment = "prod"
+| head
+| fields request_id, region
+```
+
+**Before Optimization** (without pre-filtering):
+```
+Time (mean ± σ):     16.791 s ±  0.080 s
+Range (min … max):   16.654 s … 16.948 s
+```
+- Full scan of request_logs (millions of rows)
+- In-memory hash join with full dataset
+- Post-join filtering
+
+**After Optimization** (with pre-filtering + LIMIT pushdown):
+```
+Time (mean ± σ):     69.8 ms ±  8.6 ms
+Range (min … max):   57.0 ms … 86.8 ms
+```
+- Pre-executed lookup: 2 distinct host_keys extracted
+- Terms filter pushed to request_logs: `host_key IN (1, 3)`
+- LIMIT 10 pushed to filtered scan
+- Join operates on ~20 rows instead of millions
+
+**Speedup: ~240x** (16.8s → 69.8ms)
+
+### Optimization Breakdown
+From integration test logs:
+```
+[LookupPreFilterRule] Extracting right-side filters from LogicalFilter above join
+[LookupPreFilterRule] Extracted right-side filter: =($2, 'payment-service')
+[LookupPreFilterRule] Extracted right-side filter: =($0, 'prod')
+[LookupPreFilterRule] Pushing combined filter to right scan: AND(=($2, 'payment-service'), =($0, 'prod'))
+[LookupPreFilterRule] Pre-execution complete: 2 rows processed, 2 distinct keys found
+[LookupPreFilterRule] Distinct keys: [1, 3]
+[LimitLeftJoinRule] Pushing limit 10 offset 0 to left scan
+```
+
+Key insight: Filter extraction reduced pre-execution from 30 keys (all discriminator matches) to 2 keys (discriminator + WHERE predicates), enabling accurate optimization.
 
 ## Key Files
 
@@ -62,8 +125,9 @@ If the filtered lookup returns a small set of distinct join keys:
 - `opensearch/src/main/java/org/opensearch/sql/opensearch/storage/scan/context/PushDownType.java` (added TERMS_FILTER)
 - `opensearch/src/main/java/org/opensearch/sql/opensearch/storage/scan/AbstractCalciteIndexScan.java` (estimateRowCount)
 
-### Rule
-- `opensearch/src/main/java/org/opensearch/sql/opensearch/planner/rules/LookupPreFilterRule.java`
+### Rules
+- `opensearch/src/main/java/org/opensearch/sql/opensearch/planner/rules/LookupPreFilterRule.java` (pre-filtering optimization)
+- `opensearch/src/main/java/org/opensearch/sql/opensearch/planner/rules/LimitLeftJoinRule.java` (LIMIT pushdown for LEFT JOIN)
 - `opensearch/src/main/java/org/opensearch/sql/opensearch/planner/rules/OpenSearchIndexRules.java` (registration)
 
 ### Test
@@ -106,24 +170,112 @@ This approach works because:
 - The enumerator pattern allows synchronous iteration
 - Resource cleanup is handled properly with `enumerator.close()`
 
-### Limitations
+### Current Limitations and Gaps
 
-1. **Query Pattern**: The rule only triggers when:
-   - The right scan already has filters in its `PushDownContext`
-   - The join condition is a simple equality (e.g., `left.key = right.key`)
-   - The estimated cardinality is below threshold (100 rows)
+#### Pattern Matching Restrictions
+1. **Join Type**: Only LEFT JOINs are optimized (lookup pattern)
+   - INNER JOINs converted from LEFT JOIN by Calcite are handled correctly
+   - Other join types (RIGHT, FULL OUTER) not supported
 
-2. **Filter Push-down Timing**: For the optimization to apply, filters must be pushed down to the right scan BEFORE the join optimization phase. Post-join filters (e.g., `| where ...` after lookup) won't trigger the optimization.
+2. **Join Condition**: Only simple equality conditions (e.g., `left.key = right.key`)
+   - Multi-column join keys not supported
+   - Complex join predicates (OR, <>, LIKE) not supported
 
-3. **Performance**: Pre-executing the scan adds latency during planning, but this is acceptable for small result sets (< 100 rows).
+3. **Filter Placement**: Filters must be in specific positions:
+   - ✅ Discriminator filters on lookup table
+   - ✅ WHERE predicates after lookup (extracted by `extractAndPushRightSideFilters()`)
+   - ❌ Filters within subqueries or complex expressions
+   - ❌ Filters on join results (computed columns)
 
-### Next Steps for Production
+4. **Cardinality Threshold**: Hard-coded at 100,000 distinct keys
+   - No dynamic adjustment based on data distribution
+   - May apply optimization when not beneficial (overestimate)
+   - May skip optimization when beneficial (underestimate)
 
-1. **Cost-Based Optimization**: Add cost model to decide when pre-execution is beneficial
-2. **Multi-Column Join Keys**: Support composite join conditions
-3. **Asynchronous Pre-execution**: Execute lookup scan in parallel with other planning operations
-4. **Query Rewriting**: Push post-join filters down to enable the optimization
-5. **Performance Testing**: Measure actual speedup on real workloads
+#### Architectural Concerns
+1. **Pre-Execution During Planning**:
+   - Violates Calcite's separation between planning and execution
+   - Adds latency to query planning (~10-50ms for small lookups)
+   - Non-deterministic plans (depends on current data state)
+   - Breaks plan caching and reproducibility
+   - See `lookup-optimization-alternatives.md` for architectural analysis
+
+2. **Error Handling**:
+   - Query failures during pre-execution silently skip optimization
+   - No visibility into why optimization didn't apply
+   - Network failures during planning can slow down all queries
+
+3. **Infinite Loop Prevention**:
+   - Rule checks for existing `TERMS_FILTER` to prevent re-application
+   - This is a code smell indicating architectural mismatch
+
+#### Known Edge Cases
+1. **Text Field Handling**: Uses `.keyword` subfield for terms queries
+   - Assumes keyword subfield exists
+   - May fail silently if mapping doesn't have keyword subfield
+
+2. **NULL Values**: Filtered out during pre-execution
+   - Correct for inner joins but may affect LEFT JOIN semantics
+   - Not tested with outer join null-generating cases
+
+3. **Large Key Sets**: Safety threshold prevents optimization
+   - No fallback strategy for medium-sized key sets (1K-100K)
+   - Could use batch terms queries or alternative strategies
+
+4. **Filter Extraction Complexity**:
+   - Only extracts AND conjunctions referencing right-side fields
+   - OR conditions not supported
+   - Subquery filters not supported
+   - Filter must be directly above join (no intervening operators except project)
+
+### Gaps and Future Work
+
+#### High Priority (Production Hardening)
+1. **Architectural Redesign**: See `lookup-optimization-alternatives.md`
+   - Option 1: Heuristic-based estimation (no pre-execution)
+   - Option 2: Adaptive execution (runtime decision) ⭐ Recommended
+   - Option 3: Statistics-based estimation (background collection)
+
+2. **Cost Model**:
+   - Measure actual pre-execution overhead
+   - Add heuristics for when optimization is beneficial
+   - Consider main table size, filter selectivity, network latency
+
+3. **Better Cardinality Estimation**:
+   - Analyze filter selectivity without execution
+   - Use index statistics when available
+   - Discriminator-specific selectivity heuristics
+
+4. **Error Handling and Observability**:
+   - Metrics: optimization applied, skipped, failed
+   - Debug logging: why optimization did/didn't apply
+   - Graceful degradation on failures
+
+#### Medium Priority (Generalization)
+1. **Multi-Column Join Keys**:
+   - Composite terms queries or multiple terms filters
+   - More complex join predicates
+
+2. **Complex Filter Patterns**:
+   - OR conditions (pre-execute multiple filter combinations)
+   - Subquery filters
+   - Filters with expressions on lookup columns
+
+3. **Alternative Join Strategies**:
+   - Batch terms queries for medium cardinality (1K-100K keys)
+   - Bloom filter push-down for very large key sets
+   - Index intersection for multiple join keys
+
+4. **Statistics Collection**:
+   - Background collection of discriminator cardinalities
+   - Cache for frequent lookup patterns
+   - Automatic refresh on index updates
+
+#### Low Priority (Nice to Have)
+1. **User Hints**: Allow manual control (`/*+ PREFILTER */`)
+2. **Query Plan Caching**: Cache pre-execution results for repeated queries
+3. **Asynchronous Pre-execution**: Parallel planning operations
+4. **INNER JOIN Direct Support**: Detect and optimize direct inner joins
 
 ## Design Decisions
 

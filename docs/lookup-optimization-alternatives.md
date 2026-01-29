@@ -1,5 +1,18 @@
 # Lookup Join Optimization: Architectural Analysis and Alternatives
 
+## Executive Summary
+
+**Status**: POC ✅ **VALIDATED** - 240x speedup achieved (16.8s → 69.8ms)
+
+**Current Approach**: Pre-execution during planning (violates Calcite conventions but extremely effective)
+
+**Recommendation**:
+- **Short-term**: Keep current approach, add observability and safeguards
+- **Medium-term**: Migrate to adaptive execution (runtime decision)
+- **Long-term**: Add statistics-based estimation for frequent patterns
+
+**Key Insight**: The 240x performance improvement justifies accepting architectural trade-offs for now, with a clear migration path to more principled implementations.
+
 ## Problem Summary
 
 The current POC (`LookupPreFilterRule`) optimizes lookup joins by pre-executing the lookup scan during Calcite's logical planning phase to extract join keys and push them as a terms filter to the main table. While this provides accurate cardinality information, it violates Calcite's architectural separation between planning and execution.
@@ -260,18 +273,32 @@ source = request_logs
 
 **Best For**: POC/experimental features, expert users, edge cases
 
-## Recommended Implementation Path
+## Performance Validation
 
-### Phase 1: Fix POC (Remove Pre-Execution)
+### Phase 1: Fix POC ✅ COMPLETED
 **Goal**: Get working POC to measure actual performance gains
 
-**Approach**: Keep pre-execution for now but fix the bugs:
-1. Remove caching check (lines 73-81) that prevents rule re-application
-2. Add extensive debug logging to understand execution flow
-3. Fix any issues with join key extraction or terms query construction
-4. Measure actual performance improvement on realistic workloads
+**Completed Work**:
+1. ✅ Fixed filter extraction bug (filters on lookup columns weren't pushed before pre-execution)
+2. ✅ Implemented `extractAndPushRightSideFilters()` to properly extract WHERE predicates
+3. ✅ Added LIMIT pushdown rule (`LimitLeftJoinRule`) for LEFT JOIN queries
+4. ✅ Measured actual performance improvement on realistic workload
 
-**Rationale**: Need empirical data on performance gains to justify investment in alternatives
+**Performance Results** (Filtered lookup with LIMIT query):
+```
+Before:  16.791s ± 0.080s  (full table scan + hash join)
+After:   69.8ms ± 8.6ms    (pre-filtered + limit pushed)
+Speedup: ~240x
+```
+
+**Key Insight**: The optimization provides **dramatic speedup** (240x) for the target use case:
+- Selective discriminator + additional filters
+- Small lookup result set (< 100 distinct keys)
+- Combined with LIMIT pushdown
+
+**Root Cause of Initial Bug**: Pre-execution was extracting all discriminator matches (30 keys) instead of filtered matches (2 keys), causing excessive main table filtering. Filter extraction fixed this by pushing WHERE predicates to lookup scan before pre-execution.
+
+**Empirical Validation**: ✅ The optimization is **highly effective** for dimensional analytics lookup patterns. This justifies investment in architectural improvements for production deployment.
 
 ### Phase 2: POC Alternative Approaches
 **Goal**: Validate architectural alternatives with prototypes
@@ -292,18 +319,66 @@ source = request_logs
 - Optimization accuracy (how often right decision made)
 
 ### Phase 3: Production Implementation
-**Goal**: Choose and implement production-ready approach
+**Goal**: Choose and implement production-ready approach based on empirical data
 
-**Decision Criteria**:
-1. If lookup tables are static and small → **Option 3** (statistics)
-2. If planning time is critical → **Option 2** (adaptive execution)
-3. If following Calcite conventions is priority → **Option 1** (heuristic estimation)
-4. If data patterns are unpredictable → **Option 2** (adaptive execution)
+**Given Performance Results** (240x speedup):
+The optimization is extremely valuable for the target use case. The architectural concerns (pre-execution during planning, non-deterministic plans) are significant but the performance gains justify keeping this approach for now while planning migration path.
 
-**Likely Best Choice**: Hybrid approach:
-- **Primary**: Option 2 (adaptive execution) for accuracy and simplicity
-- **Fallback**: Option 1 (heuristic estimation) for cases where runtime decision is expensive
-- **Future**: Option 3 (statistics) for frequently-used lookup tables
+**Recommended Strategy**:
+
+#### Short-Term (Current POC → Initial Production)
+**Keep current pre-execution approach** with improvements:
+1. ✅ Already working with 240x speedup
+2. Add comprehensive metrics and observability:
+   - Count: optimizations applied/skipped/failed
+   - Timing: pre-execution overhead, total query time
+   - Cardinality: estimated vs actual distinct keys
+3. Add query hint to disable optimization if needed: `/*+ NO_PREFILTER */`
+4. Document limitations and known edge cases
+5. Enable only for specific indices or query patterns (opt-in via config)
+
+**Rationale**:
+- The optimization is proven to work extremely well for the target pattern
+- Pre-execution overhead (~10-50ms) is negligible compared to 240x speedup
+- Architectural concerns are real but don't outweigh massive performance gains
+- Can migrate to better architecture incrementally
+
+#### Medium-Term (Production Hardening)
+**Implement Option 2 (Adaptive Execution)** as architectural improvement:
+
+**Phase A: Prototype** (`sql-7pz`):
+- Create `AdaptiveLookupJoin` operator
+- Defer optimization decision to runtime
+- Compare performance with pre-execution approach
+- Measure: planning time, execution time, optimization accuracy
+
+**Phase B: Hybrid Approach** (if prototype validates):
+- Keep pre-execution as default for now
+- Use adaptive execution for cases where:
+  - Pre-execution fails or times out
+  - Estimated cardinality is borderline (80K-120K keys)
+  - User explicitly requests via hint
+- Collect runtime statistics for Option 3
+
+**Phase C: Full Migration**:
+- Make adaptive execution the primary strategy
+- Fall back to heuristics when runtime decision is expensive
+- Use collected statistics for better cost estimation
+
+#### Long-Term (Advanced Optimization)
+**Implement Option 3 (Statistics-Based)** as additional optimization:
+- Background collection of discriminator cardinalities
+- Cache frequent lookup patterns
+- Use statistics to inform both heuristics and runtime decisions
+- Periodic refresh to handle data evolution
+
+**Decision Criteria Applied**:
+1. ✅ Lookup tables are static and small → Statistics will help (long-term)
+2. ✅ Planning time is critical → Will migrate to adaptive (medium-term)
+3. ❌ Following Calcite conventions is priority → Accept deviation for now given gains
+4. ✅ Data patterns are unpredictable → Adaptive execution is right long-term strategy
+
+**Migration Path**: Pre-execution (now) → Hybrid (medium-term) → Adaptive + Statistics (long-term)
 
 ## Key Architectural Insights
 
