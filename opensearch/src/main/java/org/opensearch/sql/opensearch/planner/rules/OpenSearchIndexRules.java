@@ -57,6 +57,7 @@ public class OpenSearchIndexRules {
   private static final EnumerableTopKMergeRule ENUMERABLE_TOP_K_MERGE_RULE =
       EnumerableTopKMergeRule.Config.DEFAULT.toRule();
   private static final LookupPreFilterRule LOOKUP_PRE_FILTER_RULE = LookupPreFilterRule.INSTANCE;
+  private static final LimitLeftJoinRule LIMIT_LEFT_JOIN_RULE = LimitLeftJoinRule.INSTANCE;
 
   /** The rules will apply only when the pushdown is enabled. */
   public static final List<RelOptRule> OPEN_SEARCH_PUSHDOWN_RULES =
@@ -76,7 +77,8 @@ public class OpenSearchIndexRules {
           ENUMERABLE_TOP_K_MERGE_RULE,
           EXPAND_COLLATION_ON_PROJECT_EXPR,
           SORT_EXPR_INDEX_SCAN,
-          LOOKUP_PRE_FILTER_RULE);
+          LOOKUP_PRE_FILTER_RULE,
+          LIMIT_LEFT_JOIN_RULE);
 
   // prevent instantiation
   private OpenSearchIndexRules() {}

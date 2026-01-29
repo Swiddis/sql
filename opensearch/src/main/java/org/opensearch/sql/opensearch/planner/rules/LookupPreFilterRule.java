@@ -49,17 +49,22 @@ public class LookupPreFilterRule extends RelOptRule {
   private LookupPreFilterRule() {
     super(
         operand(
-            Join.class,
-            operand(CalciteLogicalIndexScan.class, any()),
-            operand(CalciteLogicalIndexScan.class, any())),
+            org.apache.calcite.rel.logical.LogicalFilter.class,
+            operand(
+                org.apache.calcite.rel.logical.LogicalProject.class,
+                operand(
+                    Join.class,
+                    operand(CalciteLogicalIndexScan.class, any()),
+                    operand(CalciteLogicalIndexScan.class, any())))),
         "LookupPreFilterRule");
   }
 
   @Override
   public boolean matches(RelOptRuleCall call) {
-    Join join = call.rel(0);
-    CalciteLogicalIndexScan leftScan = call.rel(1);
-    CalciteLogicalIndexScan rightScan = call.rel(2);
+    // Pattern: LogicalFilter -> LogicalProject -> Join -> leftScan, rightScan
+    Join join = call.rel(2);
+    CalciteLogicalIndexScan leftScan = call.rel(3);
+    CalciteLogicalIndexScan rightScan = call.rel(4);
 
     // Only optimize LEFT joins
     if (join.getJoinType() != JoinRelType.LEFT) {
@@ -105,9 +110,12 @@ public class LookupPreFilterRule extends RelOptRule {
 
   @Override
   public void onMatch(RelOptRuleCall call) {
-    Join join = call.rel(0);
-    CalciteLogicalIndexScan leftScan = call.rel(1);
-    CalciteLogicalIndexScan rightScan = call.rel(2);
+    // Pattern: LogicalFilter -> LogicalProject -> Join -> leftScan, rightScan
+    org.apache.calcite.rel.logical.LogicalFilter filter = call.rel(0);
+    org.apache.calcite.rel.logical.LogicalProject project = call.rel(1);
+    Join join = call.rel(2);
+    CalciteLogicalIndexScan leftScan = call.rel(3);
+    CalciteLogicalIndexScan rightScan = call.rel(4);
 
     LOG.info("[LookupPreFilterRule] Rule matched, analyzing join optimization opportunity");
     LOG.info("[LookupPreFilterRule] Left scan: {}", leftScan.getTable().getQualifiedName());
@@ -173,10 +181,14 @@ public class LookupPreFilterRule extends RelOptRule {
         leftJoinKeyField,
         rightJoinKeyField);
 
-    // Pre-execute the right scan to extract distinct join key values
+    // Extract and push down filters that apply to the right side
+    CalciteLogicalIndexScan rightScanWithFilters =
+        extractAndPushRightSideFilters(filter, project, rightScan, leftFieldCount);
+
+    // Pre-execute the right scan (with filters) to extract distinct join key values
     List<Object> joinKeyValues;
     try {
-      joinKeyValues = preExecuteAndExtractJoinKeys(rightScan, rightJoinKeyField);
+      joinKeyValues = preExecuteAndExtractJoinKeys(rightScanWithFilters, rightJoinKeyField);
       LOG.info(
           "[LookupPreFilterRule] Pre-executed lookup scan, extracted {} distinct join key values",
           joinKeyValues.size());
@@ -229,12 +241,148 @@ public class LookupPreFilterRule extends RelOptRule {
             join.getTraitSet(),
             join.getCondition(),
             newLeftScan,
-            rightScan,
+            rightScanWithFilters, // Use the scan with pushed filters
             join.getJoinType(),
             join.isSemiJoinDone());
 
+    // Reconstruct the tree: Filter -> Project -> newJoin
+    org.apache.calcite.rel.logical.LogicalProject newProject =
+        (org.apache.calcite.rel.logical.LogicalProject)
+            project.copy(
+                project.getTraitSet(), newJoin, project.getProjects(), project.getRowType());
+
+    org.apache.calcite.rel.logical.LogicalFilter newFilter =
+        (org.apache.calcite.rel.logical.LogicalFilter)
+            filter.copy(filter.getTraitSet(), newProject, filter.getCondition());
+
     LOG.info("[LookupPreFilterRule] Transformation applied, returning optimized plan");
-    call.transformTo(newJoin);
+    call.transformTo(newFilter);
+  }
+
+  /**
+   * Extract filters from LogicalFilter that apply to right-side columns and push them to the right
+   * scan.
+   *
+   * @param filter the LogicalFilter above the join
+   * @param project the LogicalProject between filter and join
+   * @param rightScan the right side scan
+   * @param leftFieldCount number of fields from left side
+   * @return rightScan with additional filters pushed down
+   */
+  private CalciteLogicalIndexScan extractAndPushRightSideFilters(
+      org.apache.calcite.rel.logical.LogicalFilter filter,
+      org.apache.calcite.rel.logical.LogicalProject project,
+      CalciteLogicalIndexScan rightScan,
+      int leftFieldCount) {
+
+    LOG.info("[LookupPreFilterRule] Extracting right-side filters from LogicalFilter above join");
+
+    // Create a copy of the right scan to modify
+    CalciteLogicalIndexScan newRightScan = rightScan.copy();
+
+    // The filter references project output fields
+    // Project maps join output fields to its output
+    // We need to trace which filter conditions apply to right-side join fields
+    RexNode filterCondition = filter.getCondition();
+
+    // Map filter condition through the project to get it in terms of join output fields
+    java.util.List<RexNode> projectExprs = project.getProjects();
+    org.apache.calcite.rex.RexBuilder rexBuilder = rightScan.getCluster().getRexBuilder();
+
+    // For each conjunction in the filter, map it back to join space
+    java.util.List<RexNode> conjunctions = new java.util.ArrayList<>();
+    if (filterCondition.getKind() == org.apache.calcite.sql.SqlKind.AND) {
+      for (RexNode operand : ((RexCall) filterCondition).getOperands()) {
+        conjunctions.add(operand);
+      }
+    } else {
+      conjunctions.add(filterCondition);
+    }
+
+    // Map each filter condition back through the project
+    java.util.List<RexNode> rightSideFilters = new java.util.ArrayList<>();
+    for (RexNode conj : conjunctions) {
+      try {
+        // Replace references to project outputs with the corresponding project expressions
+        RexNode mappedToJoin =
+            conj.accept(
+                new org.apache.calcite.rex.RexShuttle() {
+                  @Override
+                  public RexNode visitInputRef(org.apache.calcite.rex.RexInputRef inputRef) {
+                    int index = inputRef.getIndex();
+                    if (index < projectExprs.size()) {
+                      return projectExprs.get(index);
+                    }
+                    return inputRef;
+                  }
+                });
+
+        // Check if this condition only references right-side fields
+        java.util.Set<Integer> referencedFields = new java.util.HashSet<>();
+        mappedToJoin.accept(
+            new org.apache.calcite.rex.RexVisitorImpl<Void>(true) {
+              @Override
+              public Void visitInputRef(org.apache.calcite.rex.RexInputRef inputRef) {
+                referencedFields.add(inputRef.getIndex());
+                return null;
+              }
+            });
+
+        // If all referenced fields are from right side (>= leftFieldCount), include this filter
+        if (!referencedFields.isEmpty()
+            && referencedFields.stream().allMatch(idx -> idx >= leftFieldCount)) {
+          // Shift indices to be relative to right scan
+          RexNode shifted = org.apache.calcite.rex.RexUtil.shift(mappedToJoin, -leftFieldCount);
+          rightSideFilters.add(shifted);
+          LOG.info("[LookupPreFilterRule] Extracted right-side filter: {}", shifted);
+        }
+      } catch (Exception e) {
+        LOG.warn("[LookupPreFilterRule] Failed to map filter condition: {}", e.getMessage());
+      }
+    }
+
+    // Push the right-side filters to the scan
+    if (!rightSideFilters.isEmpty()) {
+      RexNode combinedFilter =
+          org.apache.calcite.rex.RexUtil.composeConjunction(rexBuilder, rightSideFilters);
+      LOG.info("[LookupPreFilterRule] Pushing combined filter to right scan: {}", combinedFilter);
+
+      try {
+        // Analyze the filter using PredicateAnalyzer
+        java.util.List<String> schema =
+            new java.util.ArrayList<>(newRightScan.getRowType().getFieldNames());
+        java.util.Map<String, org.opensearch.sql.data.type.ExprType> fieldTypes =
+            newRightScan.getOsIndex().getAllFieldTypes();
+        org.opensearch.sql.opensearch.request.PredicateAnalyzer.QueryExpression queryExpression =
+            org.opensearch.sql.opensearch.request.PredicateAnalyzer.analyzeExpression(
+                combinedFilter,
+                schema,
+                fieldTypes,
+                newRightScan.getRowType(),
+                rightScan.getCluster());
+
+        // Add to push down context
+        newRightScan
+            .getPushDownContext()
+            .add(
+                queryExpression.getScriptCount() > 0 ? PushDownType.SCRIPT : PushDownType.FILTER,
+                new org.opensearch.sql.opensearch.storage.scan.context.FilterDigest(
+                    queryExpression.getScriptCount(), combinedFilter),
+                (OSRequestBuilderAction)
+                    requestBuilder ->
+                        requestBuilder.pushDownFilterForCalcite(queryExpression.builder()));
+
+        LOG.info(
+            "[LookupPreFilterRule] Successfully pushed filters: {}",
+            newRightScan.getPushDownContext());
+      } catch (Exception e) {
+        LOG.warn("[LookupPreFilterRule] Failed to push filter: {}", e.getMessage());
+      }
+    } else {
+      LOG.info("[LookupPreFilterRule] No right-side-only filters found to push");
+    }
+
+    return newRightScan;
   }
 
   /**
