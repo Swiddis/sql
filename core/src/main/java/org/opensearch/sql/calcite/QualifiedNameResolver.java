@@ -6,6 +6,7 @@
 package org.opensearch.sql.calcite;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -16,6 +17,8 @@ import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.sql.ast.expression.QualifiedName;
+import org.opensearch.sql.common.error.ErrorCode;
+import org.opensearch.sql.common.error.ErrorReport;
 import org.opensearch.sql.expression.function.BuiltinFunctionName;
 import org.opensearch.sql.expression.function.PPLFuncImpTable;
 
@@ -56,7 +59,7 @@ public class QualifiedNameResolver {
 
     return resolveFieldWithAlias(nameNode, context, 2)
         .or(() -> resolveFieldWithoutAlias(nameNode, context, 2))
-        .orElseThrow(() -> getNotFoundException(nameNode));
+        .orElseThrow(() -> getNotFoundException(nameNode, context));
   }
 
   /** Resolves qualified name in non-join condition context. */
@@ -89,7 +92,7 @@ public class QualifiedNameResolver {
 
     return resolveCorrelationField(nameNode, context)
         .or(() -> replaceWithNullLiteralInCoalesce(context))
-        .orElseThrow(() -> getNotFoundException(nameNode));
+        .orElseThrow(() -> getNotFoundException(nameNode, context));
   }
 
   private static String joinParts(List<String> parts, int start, int length) {
@@ -322,7 +325,113 @@ public class QualifiedNameResolver {
     return Optional.empty();
   }
 
-  private static RuntimeException getNotFoundException(QualifiedName node) {
-    return new IllegalArgumentException(String.format("Field [%s] not found.", node.toString()));
+  /**
+   * Creates a field not found exception with contextual information and suggestions.
+   *
+   * @param node The qualified name that was not found
+   * @param context The CalcitePlanContext containing available fields
+   * @return RuntimeException with enriched error information
+   */
+  private static RuntimeException getNotFoundException(
+      QualifiedName node, CalcitePlanContext context) {
+    String fieldName = node.toString();
+
+    // Get available fields from the current context
+    List<String> availableFields = context.relBuilder.peek().getRowType().getFieldNames();
+
+    // Create the base exception
+    IllegalArgumentException cause =
+        new IllegalArgumentException(String.format("Field [%s] not found.", fieldName));
+
+    // Build ErrorReport with suggestions
+    ErrorReport.Builder reportBuilder =
+        ErrorReport.wrap(cause)
+            .code(ErrorCode.FIELD_NOT_FOUND)
+            .location("while resolving field references")
+            .context("field_name", fieldName)
+            .context("available_fields", availableFields);
+
+    // Find similar field names for suggestions
+    String suggestion = findSimilarField(fieldName, availableFields);
+    if (suggestion != null) {
+      reportBuilder.suggestion(String.format("Did you mean: '%s'?", suggestion));
+    } else if (!availableFields.isEmpty()) {
+      // If no similar field found, show a few available fields
+      int maxToShow = Math.min(5, availableFields.size());
+      String fieldList =
+          availableFields.stream().limit(maxToShow).collect(Collectors.joining("', '", "'", "'"));
+      reportBuilder.suggestion(
+          String.format(
+              "Available fields: %s%s",
+              fieldList, availableFields.size() > maxToShow ? ", ..." : ""));
+    }
+
+    return reportBuilder.build();
+  }
+
+  /**
+   * Finds the most similar field name using Levenshtein distance.
+   *
+   * @param target The target field name
+   * @param candidates List of candidate field names
+   * @return The most similar field name, or null if no good match
+   */
+  private static String findSimilarField(String target, List<String> candidates) {
+    if (candidates.isEmpty()) {
+      return null;
+    }
+
+    String targetLower = target.toLowerCase();
+
+    // Find the candidate with minimum Levenshtein distance
+    return candidates.stream()
+        .min(
+            Comparator.comparingInt(
+                candidate -> levenshteinDistance(targetLower, candidate.toLowerCase())))
+        .filter(
+            candidate -> {
+              int distance = levenshteinDistance(targetLower, candidate.toLowerCase());
+              // Only suggest if distance is less than 3 or within 30% of the length
+              return distance <= 2 || distance <= target.length() * 0.3;
+            })
+        .orElse(null);
+  }
+
+  /**
+   * Calculates the Levenshtein distance between two strings.
+   *
+   * @param s1 First string
+   * @param s2 Second string
+   * @return The Levenshtein distance
+   */
+  private static int levenshteinDistance(String s1, String s2) {
+    int len1 = s1.length();
+    int len2 = s2.length();
+
+    // Create a 2D array to store distances
+    int[][] dp = new int[len1 + 1][len2 + 1];
+
+    // Initialize base cases
+    for (int i = 0; i <= len1; i++) {
+      dp[i][0] = i;
+    }
+    for (int j = 0; j <= len2; j++) {
+      dp[0][j] = j;
+    }
+
+    // Fill the matrix
+    for (int i = 1; i <= len1; i++) {
+      for (int j = 1; j <= len2; j++) {
+        int cost = (s1.charAt(i - 1) == s2.charAt(j - 1)) ? 0 : 1;
+        dp[i][j] =
+            Math.min(
+                Math.min(
+                    dp[i - 1][j] + 1, // deletion
+                    dp[i][j - 1] + 1), // insertion
+                dp[i - 1][j - 1] + cost); // substitution
+      }
+    }
+
+    return dp[len1][len2];
   }
 }

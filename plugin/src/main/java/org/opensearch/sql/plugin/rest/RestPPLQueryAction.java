@@ -59,7 +59,8 @@ public class RestPPLQueryAction extends BaseRestHandler {
         || e instanceof QueryEngineException
         || e instanceof SyntaxCheckException
         || e instanceof DataSourceClientException
-        || e instanceof IllegalAccessException;
+        || e instanceof IllegalAccessException
+        || e instanceof org.opensearch.sql.common.error.ErrorReport;
   }
 
   @Override

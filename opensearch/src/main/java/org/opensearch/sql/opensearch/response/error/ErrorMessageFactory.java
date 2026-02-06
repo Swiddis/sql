@@ -7,6 +7,7 @@ package org.opensearch.sql.opensearch.response.error;
 
 import lombok.experimental.UtilityClass;
 import org.opensearch.OpenSearchException;
+import org.opensearch.sql.common.error.ErrorReport;
 
 @UtilityClass
 public class ErrorMessageFactory {
@@ -31,6 +32,10 @@ public class ErrorMessageFactory {
   protected static Throwable unwrapCause(Throwable t) {
     Throwable result = t;
     if (result instanceof OpenSearchException) {
+      return result;
+    }
+    // Stop unwrapping if we encounter an ErrorReport - it contains rich context we want to preserve
+    if (result instanceof ErrorReport) {
       return result;
     }
     if (result.getCause() == null) {

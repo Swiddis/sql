@@ -5,9 +5,13 @@
 
 package org.opensearch.sql.opensearch.response.error;
 
+import java.util.List;
+import java.util.Map;
 import lombok.Getter;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.opensearch.core.rest.RestStatus;
+import org.opensearch.sql.common.error.ErrorReport;
 
 /** Error Message. */
 public class ErrorMessage {
@@ -67,6 +71,38 @@ public class ErrorMessage {
     errorJson.put("type", type);
     errorJson.put("reason", reason);
     errorJson.put("details", details);
+
+    // If this is an ErrorReport, add rich contextual information
+    if (exception instanceof ErrorReport) {
+      ErrorReport report = (ErrorReport) exception;
+
+      // Add error code if available
+      if (report.getCode() != null) {
+        errorJson.put("code", report.getCode().name());
+      }
+
+      // Add location chain if available
+      List<String> locationChain = report.getLocationChain();
+      if (!locationChain.isEmpty()) {
+        JSONArray locationArray = new JSONArray(locationChain);
+        errorJson.put("location", locationArray);
+      }
+
+      // Add context data if available
+      Map<String, Object> context = report.getContext();
+      if (!context.isEmpty()) {
+        JSONObject contextJson = new JSONObject();
+        for (Map.Entry<String, Object> entry : context.entrySet()) {
+          contextJson.put(entry.getKey(), entry.getValue());
+        }
+        errorJson.put("context", contextJson);
+      }
+
+      // Add suggestion if available
+      if (report.getSuggestion() != null) {
+        errorJson.put("suggestion", report.getSuggestion());
+      }
+    }
 
     return errorJson;
   }
