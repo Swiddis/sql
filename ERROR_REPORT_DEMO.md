@@ -145,6 +145,10 @@ source=big5 | fields messag
     ],
     "context": {
       "field_name": "messag",
+      "position": {
+        "line": 1,
+        "column": 21
+      },
       "available_fields": ["agent", "agent.ephemeral_id", "agent.id", "...40 more fields"]
     },
     "suggestion": "Did you mean: 'message'?"
@@ -153,6 +157,7 @@ source=big5 | fields messag
 ```
 
 **Key Features:**
+- ✅ Exact position where field appears (line 1, column 21)
 - ✅ Levenshtein distance matching
 - ✅ Suggests most similar field
 - ✅ Shows all available fields in context
@@ -178,6 +183,10 @@ source=big5 | fields xyz123
     ],
     "context": {
       "field_name": "xyz123",
+      "position": {
+        "line": 1,
+        "column": 21
+      },
       "available_fields": ["agent", "agent.ephemeral_id", "agent.id", "agent.name", "agent.type", "..."]
     },
     "suggestion": "Available fields: 'agent', 'agent.ephemeral_id', 'agent.id', 'agent.name', 'agent.type', ..."
@@ -186,6 +195,7 @@ source=big5 | fields xyz123
 ```
 
 **Key Features:**
+- ✅ Exact position where field appears
 - ✅ When no similar match, shows first 5 available fields
 - ✅ Helps users discover what fields exist
 
@@ -210,6 +220,10 @@ source=big5 | fields host.nam
     ],
     "context": {
       "field_name": "host.nam",
+      "position": {
+        "line": 1,
+        "column": 21
+      },
       "available_fields": ["agent", "host", "host.name", "..."]
     },
     "suggestion": "Did you mean: 'host.name'?"
@@ -218,6 +232,7 @@ source=big5 | fields host.nam
 ```
 
 **Key Features:**
+- ✅ Exact position of nested field reference
 - ✅ Works with dotted field names
 - ✅ Suggests correct nested field
 
@@ -246,6 +261,10 @@ source=big5 | fields message | where host.name = "test"
     ],
     "context": {
       "field_name": "host.name",
+      "position": {
+        "line": 1,
+        "column": 37
+      },
       "fields_command_used": true,
       "available_fields": ["message"]
     },
@@ -255,6 +274,7 @@ source=big5 | fields message | where host.name = "test"
 ```
 
 **Key Features:**
+- ✅ Exact position where field is referenced in WHERE clause
 - ✅ Detects `fields` command was used
 - ✅ Explains why field is not available
 - ✅ Shows current available fields after projection
@@ -280,6 +300,10 @@ source=big5 | fields message, host.name, @timestamp | where agent.id = "xyz"
     ],
     "context": {
       "field_name": "agent.id",
+      "position": {
+        "line": 1,
+        "column": 59
+      },
       "fields_command_used": true,
       "available_fields": ["message", "host.name", "@timestamp"]
     },
@@ -289,6 +313,7 @@ source=big5 | fields message, host.name, @timestamp | where agent.id = "xyz"
 ```
 
 **Key Features:**
+- ✅ Exact position of field reference in WHERE clause
 - ✅ Shows all currently available fields after projection
 - ✅ Makes it clear which fields user can access
 
@@ -334,6 +359,10 @@ source=big5 | fields message, host.name, @timestamp | where agent.id = "xyz"
     "location": ["while resolving field references"],
     "context": {
       "field_name": "messag",
+      "position": {
+        "line": 1,
+        "column": 21
+      },
       "available_fields": ["message", "host", "agent", "..."]
     },
     "suggestion": "Did you mean: 'message'?"
@@ -342,10 +371,19 @@ source=big5 | fields message, host.name, @timestamp | where agent.id = "xyz"
 ```
 
 **Improvements:**
+- ✅ **Exact position** where error occurs (line/column)
 - ✅ Smart suggestion using fuzzy matching
 - ✅ Machine-readable error code
 - ✅ Structured context with available fields
 - ✅ Location chain for debugging
+
+**Visual Display Possibility:**
+```
+source=big5 | fields messag
+                     ^^^^^^
+                     Error: Field [messag] not found.
+                     Did you mean: 'message'?
+```
 
 ---
 
@@ -414,17 +452,19 @@ curl -X POST http://localhost:9200/_plugins/_ppl \
 
 ### Coverage
 - ✅ Syntax errors: cursor position + expected tokens
-- ✅ SQL pattern detection: IS [NOT] NULL
+- ✅ Field errors: **exact position** + smart suggestions
+- ✅ SQL pattern detection: IS [NOT] NULL → function suggestions
 - ✅ Field typos: Levenshtein distance suggestions
 - ✅ Context awareness: fields command detection
 - ✅ Machine-readable: error codes for programmatic handling
 
 ### User Experience Improvements
-1. **Faster debugging**: Exact error locations with cursor positions
-2. **Better guidance**: Actionable suggestions instead of generic errors
-3. **Learning aid**: Helps SQL users learn PPL syntax
-4. **Context awareness**: Explains why fields are not available
-5. **Tooling support**: Structured errors enable IDE integrations
+1. **Pinpoint accuracy**: Every error includes exact line/column position
+2. **Visual debugging**: Display scripts can point directly at errors with carets (^)
+3. **Better guidance**: Actionable suggestions instead of generic errors
+4. **Learning aid**: Helps SQL users learn PPL syntax
+5. **Context awareness**: Explains why fields are not available
+6. **Tooling support**: Structured errors enable IDE integrations and linters
 
 ---
 
