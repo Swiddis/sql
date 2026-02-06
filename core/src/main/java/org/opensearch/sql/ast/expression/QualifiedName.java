@@ -26,16 +26,33 @@ public class QualifiedName extends UnresolvedExpression {
   private final List<String> parts;
 
   public QualifiedName(String name) {
+    super(); // No position information
     this.parts = Collections.singletonList(name);
   }
 
   /** QualifiedName Constructor. */
   public QualifiedName(Iterable<String> parts) {
+    super(); // No position information
     List<String> partsList = StreamSupport.stream(parts.spliterator(), false).collect(toList());
     if (partsList.isEmpty()) {
       throw new IllegalArgumentException("parts is empty");
     }
     this.parts = partsList;
+  }
+
+  /**
+   * Constructor with position information.
+   *
+   * @param parts Field name parts (e.g., ["host", "name"] for host.name)
+   * @param line Line number (1-based) where this field appears in the query
+   * @param column Column number (0-based) where this field appears in the query
+   */
+  public QualifiedName(List<String> parts, int line, int column) {
+    super(line, column);
+    if (parts.isEmpty()) {
+      throw new IllegalArgumentException("parts is empty");
+    }
+    this.parts = new ArrayList<>(parts);
   }
 
   /** Construct {@link QualifiedName} from list of string. */

@@ -7,7 +7,9 @@ package org.opensearch.sql.calcite;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -350,6 +352,14 @@ public class QualifiedNameResolver {
             .location("while resolving field references")
             .context("field_name", fieldName)
             .context("available_fields", availableFields);
+
+    // Add position information if available
+    if (node.hasPosition()) {
+      Map<String, Object> position = new HashMap<>();
+      position.put("line", node.getLine());
+      position.put("column", node.getColumn());
+      reportBuilder.context("position", position);
+    }
 
     // Check if a projection (fields command) has reduced the available fields
     boolean fieldsCommandUsed = context.isProjectVisited();

@@ -21,6 +21,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.RuleContext;
+import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.opensearch.sql.ast.AbstractNodeVisitor;
 import org.opensearch.sql.ast.Node;
@@ -828,11 +829,20 @@ public class AstExpressionBuilder extends OpenSearchPPLParserBaseVisitor<Unresol
   }
 
   public QualifiedName visitIdentifiers(List<? extends ParserRuleContext> ctx) {
-    return new QualifiedName(
+    List<String> parts =
         ctx.stream()
             .map(RuleContext::getText)
             .map(StringUtils::unquoteIdentifier)
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList());
+
+    // Capture position from the first token
+    if (!ctx.isEmpty() && ctx.get(0).getStart() != null) {
+      Token startToken = ctx.get(0).getStart();
+      return new QualifiedName(parts, startToken.getLine(), startToken.getCharPositionInLine());
+    }
+
+    // Fallback to no position if context is empty
+    return new QualifiedName(parts);
   }
 
   private List<UnresolvedExpression> singleFieldRelevanceArguments(
