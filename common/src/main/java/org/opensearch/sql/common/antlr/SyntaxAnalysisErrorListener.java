@@ -69,8 +69,12 @@ public class SyntaxAnalysisErrorListener extends BaseErrorListener {
             .context("position", position)
             .context("offending_token", getOffendingText(offendingToken));
 
-    // Add expected tokens as suggestion if available
-    if (e != null) {
+    // Check for common SQL syntax patterns and provide helpful suggestions
+    String customSuggestion = getCustomSuggestion(offendingToken, tokens);
+    if (customSuggestion != null) {
+      reportBuilder.suggestion(customSuggestion);
+    } else if (e != null) {
+      // Add expected tokens as suggestion if available
       IntervalSet possibleContinuations = e.getExpectedTokens();
       List<String> suggestions = topSuggestions(recognizer, possibleContinuations);
       if (!suggestions.isEmpty()) {
@@ -85,6 +89,74 @@ public class SyntaxAnalysisErrorListener extends BaseErrorListener {
     }
 
     throw reportBuilder.build();
+  }
+
+  /**
+   * Detect common SQL syntax patterns and provide custom suggestions.
+   *
+   * @param offendingToken The token that caused the error
+   * @param tokens The token stream
+   * @return Custom suggestion text, or null if no pattern detected
+   */
+  private String getCustomSuggestion(Token offendingToken, CommonTokenStream tokens) {
+    String offendingText = offendingToken.getText().toLowerCase();
+    String query = tokens.getText();
+
+    // Detect "is [not] null" pattern by examining the query string
+    if ("is".equals(offendingText)) {
+      // Get the position in the query after "is"
+      int isEndPos = offendingToken.getStopIndex() + 1;
+
+      // Look ahead in the query string to see what follows "is"
+      String remainingQuery = query.substring(isEndPos).trim().toLowerCase();
+
+      if (remainingQuery.startsWith("not null") || remainingQuery.startsWith("not\tnull")) {
+        // Get the field name before "is"
+        String fieldName = getFieldNameBeforeIs(offendingToken, tokens.getTokens());
+        return String.format(
+            "PPL doesn't support 'IS NOT NULL' syntax. Use isnotnull(%s) function instead.",
+            fieldName);
+      } else if (remainingQuery.startsWith("null")) {
+        // Get the field name before "is"
+        String fieldName = getFieldNameBeforeIs(offendingToken, tokens.getTokens());
+        return String.format(
+            "PPL doesn't support 'IS NULL' syntax. Use isnull(%s) function instead.", fieldName);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Try to extract the field name that appears before the "is" keyword.
+   *
+   * @param isToken The "is" token
+   * @param allTokens All tokens in the stream
+   * @return The field name, or "field" as a placeholder
+   */
+  private String getFieldNameBeforeIs(Token isToken, List<Token> allTokens) {
+    int isIndex = isToken.getTokenIndex();
+
+    // Look backwards to find the field name, skipping whitespace tokens
+    for (int i = isIndex - 1; i >= 0; i--) {
+      Token token = allTokens.get(i);
+      String tokenText = token.getText();
+
+      // Skip whitespace and hidden tokens
+      if (tokenText.trim().isEmpty()) {
+        continue;
+      }
+
+      // If we hit a keyword or operator, stop looking
+      if (tokenText.matches("(?i)(where|and|or|not|\\||,|\\(|\\))")) {
+        break;
+      }
+
+      // Return the first non-whitespace, non-keyword token as the field name
+      return tokenText;
+    }
+
+    return "field";
   }
 
   private String getOffendingText(Token offendingToken) {

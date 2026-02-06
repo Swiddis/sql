@@ -351,22 +351,46 @@ public class QualifiedNameResolver {
             .context("field_name", fieldName)
             .context("available_fields", availableFields);
 
+    // Check if a projection (fields command) has reduced the available fields
+    boolean fieldsCommandUsed = context.isProjectVisited();
+    if (fieldsCommandUsed) {
+      reportBuilder.context("fields_command_used", true);
+    }
+
     // Find similar field names for suggestions
     String suggestion = findSimilarField(fieldName, availableFields);
     if (suggestion != null) {
       reportBuilder.suggestion(String.format("Did you mean: '%s'?", suggestion));
-    } else if (!availableFields.isEmpty()) {
-      // If no similar field found, show a few available fields
-      int maxToShow = Math.min(5, availableFields.size());
-      String fieldList =
-          availableFields.stream().limit(maxToShow).collect(Collectors.joining("', '", "'", "'"));
+    } else if (fieldsCommandUsed) {
+      // If fields command was used and no similar field found, explain the context reduction
       reportBuilder.suggestion(
           String.format(
-              "Available fields: %s%s",
-              fieldList, availableFields.size() > maxToShow ? ", ..." : ""));
+              "Field [%s] not in current context. Note: A 'fields' command earlier in the query"
+                  + " removed fields not explicitly listed. Current fields: %s",
+              fieldName, formatFieldList(availableFields, 5)));
+    } else if (!availableFields.isEmpty()) {
+      // If no similar field found, show a few available fields
+      reportBuilder.suggestion(
+          String.format("Available fields: %s", formatFieldList(availableFields, 5)));
     }
 
     return reportBuilder.build();
+  }
+
+  /**
+   * Format a list of field names for display, showing up to maxCount fields.
+   *
+   * @param fields The list of field names
+   * @param maxCount Maximum number of fields to show
+   * @return Formatted string like "'field1', 'field2', 'field3', ..."
+   */
+  private static String formatFieldList(List<String> fields, int maxCount) {
+    if (fields.isEmpty()) {
+      return "(none)";
+    }
+    int count = Math.min(maxCount, fields.size());
+    String fieldList = fields.stream().limit(count).collect(Collectors.joining("', '", "'", "'"));
+    return fields.size() > maxCount ? fieldList + ", ..." : fieldList;
   }
 
   /**
