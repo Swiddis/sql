@@ -30,3 +30,30 @@ if (!gradle.startParameter.offline) {
     include 'integ-test'
     include 'doctest'
 }
+
+// Include ml-commons plugin as a composite build for development/testing
+def mlCommonsPath = System.getenv("ML_COMMONS_PATH") ?: "${System.getProperty('user.home')}/workplace/ml-commons"
+def openSearchCorePath = "${System.getProperty('user.home')}/workplace/opensearch"
+
+if (new File(mlCommonsPath).exists()) {
+    // Check if OPENSEARCH_CORE_PATH is set for ml-commons streaming plugin support
+    if (!System.getenv("OPENSEARCH_CORE_PATH")) {
+        if (new File(openSearchCorePath).exists()) {
+            println "⚠️  OPENSEARCH_CORE_PATH not set. ml-commons needs this for streaming plugins."
+            println "   Run: export OPENSEARCH_CORE_PATH=${openSearchCorePath}"
+            println "   (ml-commons may still work without streaming features)"
+        } else {
+            println "⚠️  OPENSEARCH_CORE_PATH not set and ${openSearchCorePath} not found"
+            println "   ml-commons streaming features may not work without this"
+        }
+    }
+
+    includeBuild(mlCommonsPath) {
+        dependencySubstitution {
+            substitute module('org.opensearch.plugin:opensearch-ml-plugin') using project(':')
+        }
+    }
+    println "✓ Including ml-commons from: ${mlCommonsPath}"
+} else {
+    println "ml-commons not found at ${mlCommonsPath}, skipping composite build"
+}

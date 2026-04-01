@@ -270,11 +270,34 @@ def getGeoSpatialPlugin() {
     }
 }
 
+def getMlCommonsPlugin() {
+    provider { (RegularFile) (() -> {
+        // For composite builds, reference the built zip directly
+        def mlCommonsPath = System.getenv("ML_COMMONS_PATH") ?: "${System.getProperty('user.home')}/workplace/ml-commons"
+        def mlCommonsZip = new File("${mlCommonsPath}/plugin/build/distributions").listFiles()?.find {
+            it.name.startsWith('opensearch-ml-') && it.name.endsWith('.zip')
+        }
+        if (mlCommonsZip == null || !mlCommonsZip.exists()) {
+            throw new GradleException("ml-commons plugin zip not found. Run './gradlew assemble' in ${mlCommonsPath} first.")
+        }
+        return mlCommonsZip
+    })
+    }
+}
+
+def hasMlCommonsPlugin() {
+    return gradle.includedBuilds.any { it.name == 'ml-commons' }
+}
+
 testClusters {
     integTest {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
+        if (hasMlCommonsPlugin()) {
+            plugin(getMlCommonsPlugin())
+            setting "plugins.ml_commons.stream_enabled", "true"
+        }
         plugin ":opensearch-sql-plugin"
         setting "plugins.query.datasources.encryption.masterkey", "1234567812345678"
     }
@@ -282,6 +305,10 @@ testClusters {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
+        if (hasMlCommonsPlugin()) {
+            plugin(getMlCommonsPlugin())
+            setting "plugins.ml_commons.stream_enabled", "true"
+        }
         plugin ":opensearch-sql-plugin"
         setting "plugins.query.datasources.encryption.masterkey", "1234567812345678"
     }
@@ -289,16 +316,28 @@ testClusters {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
+        if (hasMlCommonsPlugin()) {
+            plugin(getMlCommonsPlugin())
+            setting "plugins.ml_commons.stream_enabled", "true"
+        }
         plugin ":opensearch-sql-plugin"
     }
     integTestWithSecurity {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
+        if (hasMlCommonsPlugin()) {
+            plugin(getMlCommonsPlugin())
+            setting "plugins.ml_commons.stream_enabled", "true"
+        }
         plugin ":opensearch-sql-plugin"
     }
     remoteIntegTestWithSecurity {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
+        if (hasMlCommonsPlugin()) {
+            plugin(getMlCommonsPlugin())
+            setting "plugins.ml_commons.stream_enabled", "true"
+        }
         plugin ":opensearch-sql-plugin"
     }
 }
