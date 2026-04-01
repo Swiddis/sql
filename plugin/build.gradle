@@ -303,8 +303,38 @@ def getJobSchedulerPlugin() {
     })
 }
 
+def getMlCommonsPlugin() {
+    provider(new Callable<RegularFile>() {
+        @Override
+        RegularFile call() throws Exception {
+            return new RegularFile() {
+                @Override
+                File getAsFile() {
+                    // For composite builds, reference the built zip directly
+                    def mlCommonsPath = System.getenv("ML_COMMONS_PATH") ?: "${System.getProperty('user.home')}/workplace/ml-commons"
+                    def mlCommonsZip = new File("${mlCommonsPath}/plugin/build/distributions").listFiles()?.find {
+                        it.name.startsWith('opensearch-ml-') && it.name.endsWith('.zip')
+                    }
+                    if (mlCommonsZip == null || !mlCommonsZip.exists()) {
+                        throw new GradleException("ml-commons plugin zip not found. Run './gradlew assemble' in ${mlCommonsPath} first.")
+                    }
+                    return mlCommonsZip
+                }
+            }
+        }
+    })
+}
+
+def hasMlCommonsPlugin() {
+    return gradle.includedBuilds.any { it.name == 'ml-commons' }
+}
+
 testClusters.integTest {
     plugin(getJobSchedulerPlugin())
+    if (hasMlCommonsPlugin()) {
+        plugin(getMlCommonsPlugin())
+        setting "plugins.ml_commons.stream_enabled", "true"
+    }
     plugin(project.tasks.bundlePlugin.archiveFile)
     testDistribution = "ARCHIVE"
 
