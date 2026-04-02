@@ -289,12 +289,51 @@ def hasMlCommonsPlugin() {
     return gradle.includedBuilds.any { it.name == 'ml-commons' }
 }
 
+def getStreamingPlugin(String pluginName) {
+    provider { (RegularFile) (() -> {
+        def openSearchCorePath = System.getenv("OPENSEARCH_CORE_PATH") ?: "${System.getProperty('user.home')}/workplace/opensearch"
+        def pluginZip = new File("${openSearchCorePath}/plugins/${pluginName}/build/distributions").listFiles()?.find {
+            it.name.startsWith(pluginName) && it.name.endsWith('.zip') && !it.name.contains('client')
+        }
+        if (pluginZip == null || !pluginZip.exists()) {
+            throw new GradleException("${pluginName} plugin zip not found. Run './gradlew :plugins:${pluginName}:assemble' in ${openSearchCorePath} first.")
+        }
+        return pluginZip
+    })
+    }
+}
+
+def hasStreamingPlugins() {
+    def openSearchCorePath = System.getenv("OPENSEARCH_CORE_PATH") ?: "${System.getProperty('user.home')}/workplace/opensearch"
+    def reactorNetty = new File("${openSearchCorePath}/plugins/transport-reactor-netty4/build/distributions")
+    def arrowFlight = new File("${openSearchCorePath}/plugins/arrow-flight-rpc/build/distributions")
+    return reactorNetty.exists() && arrowFlight.exists() &&
+           reactorNetty.listFiles()?.any { it.name.endsWith('.zip') && !it.name.contains('client') } &&
+           arrowFlight.listFiles()?.any { it.name.endsWith('.zip') }
+}
+
 testClusters {
     integTest {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
         if (hasMlCommonsPlugin()) {
+            // Add streaming plugins required by ml-commons
+            if (hasStreamingPlugins()) {
+                plugin(getStreamingPlugin('transport-reactor-netty4'))
+                plugin(getStreamingPlugin('arrow-flight-rpc'))
+
+                // Enable streaming configuration (matching ml-commons setup)
+                setting 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+                setting 'http.type', 'reactor-netty4'
+
+                // Netty system properties for streaming
+                systemProperty 'io.netty.allocator.numDirectArenas', '1'
+                systemProperty 'io.netty.noUnsafe', 'false'
+                systemProperty 'io.netty.tryUnsafe', 'true'
+                systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+                jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+            }
             plugin(getMlCommonsPlugin())
             setting "plugins.ml_commons.stream_enabled", "true"
         }
@@ -306,6 +345,18 @@ testClusters {
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
         if (hasMlCommonsPlugin()) {
+            if (hasStreamingPlugins()) {
+                plugin(getStreamingPlugin('transport-reactor-netty4'))
+                plugin(getStreamingPlugin('arrow-flight-rpc'))
+
+                setting 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+                setting 'http.type', 'reactor-netty4'
+                systemProperty 'io.netty.allocator.numDirectArenas', '1'
+                systemProperty 'io.netty.noUnsafe', 'false'
+                systemProperty 'io.netty.tryUnsafe', 'true'
+                systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+                jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+            }
             plugin(getMlCommonsPlugin())
             setting "plugins.ml_commons.stream_enabled", "true"
         }
@@ -317,6 +368,18 @@ testClusters {
         plugin(getJobSchedulerPlugin())
         plugin(getGeoSpatialPlugin())
         if (hasMlCommonsPlugin()) {
+            if (hasStreamingPlugins()) {
+                plugin(getStreamingPlugin('transport-reactor-netty4'))
+                plugin(getStreamingPlugin('arrow-flight-rpc'))
+
+                setting 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+                setting 'http.type', 'reactor-netty4'
+                systemProperty 'io.netty.allocator.numDirectArenas', '1'
+                systemProperty 'io.netty.noUnsafe', 'false'
+                systemProperty 'io.netty.tryUnsafe', 'true'
+                systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+                jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+            }
             plugin(getMlCommonsPlugin())
             setting "plugins.ml_commons.stream_enabled", "true"
         }
@@ -326,6 +389,22 @@ testClusters {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         if (hasMlCommonsPlugin()) {
+            if (hasStreamingPlugins()) {
+                plugin(getStreamingPlugin('transport-reactor-netty4'))
+                plugin(getStreamingPlugin('arrow-flight-rpc'))
+
+                // Security-enabled streaming requires different settings
+                setting 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+                setting 'http.type', 'reactor-netty4-secure'
+                setting 'transport.stream.type.default', 'FLIGHT-SECURE'
+                setting 'flight.ssl.enable', 'true'
+
+                systemProperty 'io.netty.allocator.numDirectArenas', '1'
+                systemProperty 'io.netty.noUnsafe', 'false'
+                systemProperty 'io.netty.tryUnsafe', 'true'
+                systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+                jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+            }
             plugin(getMlCommonsPlugin())
             setting "plugins.ml_commons.stream_enabled", "true"
         }
@@ -335,6 +414,22 @@ testClusters {
         testDistribution = 'archive'
         plugin(getJobSchedulerPlugin())
         if (hasMlCommonsPlugin()) {
+            if (hasStreamingPlugins()) {
+                plugin(getStreamingPlugin('transport-reactor-netty4'))
+                plugin(getStreamingPlugin('arrow-flight-rpc'))
+
+                // Security-enabled streaming requires different settings
+                setting 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+                setting 'http.type', 'reactor-netty4-secure'
+                setting 'transport.stream.type.default', 'FLIGHT-SECURE'
+                setting 'flight.ssl.enable', 'true'
+
+                systemProperty 'io.netty.allocator.numDirectArenas', '1'
+                systemProperty 'io.netty.noUnsafe', 'false'
+                systemProperty 'io.netty.tryUnsafe', 'true'
+                systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+                jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+            }
             plugin(getMlCommonsPlugin())
             setting "plugins.ml_commons.stream_enabled", "true"
         }
