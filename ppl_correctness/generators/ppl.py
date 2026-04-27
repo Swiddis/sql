@@ -35,7 +35,24 @@ class PPLQueryGenerator:
 
     def _generate_simple_predicate(self) -> str:
         """Generate a simple comparison predicate"""
-        field = self.rng.choice(self.context.get_comparable_fields())
+        comparable = self.context.get_comparable_fields()
+        if not comparable:
+            return "true"
+
+        # 20% chance of null check predicate
+        if self.rng.random() < 0.2:
+            field = self.rng.choice(comparable)
+            return self.rng.choice([
+                f"isnotnull({field.name})",
+                f"isnull({field.name})"
+            ])
+
+        field = self.rng.choice(comparable)
+
+        # Skip predicates on array fields (semantics unclear)
+        if field.is_array:
+            # For arrays, just use null checks
+            return f"isnotnull({field.name})"
 
         if field.type == FieldType.BOOLEAN:
             return field.name
@@ -50,8 +67,8 @@ class PPLQueryGenerator:
             value = self.rng.choice(['red', 'green', 'blue', 'yellow', 'purple'])
             return f"{field.name} {op} '{value}'"
 
-        # Default: equality check
-        return f"{field.name} = {field.name}"
+        # Default: null check
+        return f"isnotnull({field.name})"
 
     def generate_base_query(self) -> str:
         """Generate a basic source query"""
@@ -123,3 +140,63 @@ class PPLQueryGenerator:
         op = self.rng.choice(['+', '-', '*', '/'])
 
         return f"{base} | eval computed = {f1.name} {op} {f2.name}"
+
+    def generate_rename_cmd(self) -> str:
+        """Generate RENAME command"""
+        if not self.context.fields:
+            return ""
+
+        field = self.rng.choice(self.context.fields)
+        # Simple alphanumeric alias
+        alias = f"alias_{field.name.replace('.', '_')}"
+        return f"rename {field.name} as {alias}"
+
+    def generate_dedup_cmd(self) -> str:
+        """Generate DEDUP command"""
+        groupable = self.context.get_groupable_fields()
+        if not groupable:
+            return ""
+
+        field = self.rng.choice(groupable)
+        return f"dedup {field.name}"
+
+    def generate_command_chain(self, length: int = 3) -> str:
+        """Generate pipeline of commands"""
+        commands = [self.generate_base_query()]
+
+        available_commands = [
+            lambda: f"where {self.generate_predicate()}",
+            lambda: f"eval computed = {self._generate_eval_expr()}",
+            lambda: f"sort {self._generate_sort_expr()}",
+            self.generate_rename_cmd,
+            self.generate_dedup_cmd,
+        ]
+
+        for _ in range(length):
+            cmd_gen = self.rng.choice(available_commands)
+            cmd = cmd_gen()
+            if cmd:  # Only add non-empty commands
+                commands.append(cmd)
+
+        return " | ".join(commands)
+
+    def _generate_eval_expr(self) -> str:
+        """Generate eval expression"""
+        numeric = self.context.get_numeric_fields()
+        if len(numeric) >= 2:
+            f1, f2 = self.rng.sample(numeric, 2)
+            op = self.rng.choice(['+', '-', '*'])
+            return f"{f1.name} {op} {f2.name}"
+        elif numeric:
+            return f"{numeric[0].name} * 2"
+        return "1"
+
+    def _generate_sort_expr(self) -> str:
+        """Generate sort expression"""
+        sortable = self.context.get_comparable_fields()
+        if not sortable:
+            return ""
+
+        field = self.rng.choice(sortable)
+        direction = self.rng.choice(['+', '-'])
+        return f"{direction}{field.name}"

@@ -7,6 +7,7 @@ For any query q and predicate p:
 This property holds because boolean logic has exactly three states: true, false, null.
 """
 
+from gelidum import freeze
 from typing import Any, List
 import random
 from opensearchpy import OpenSearch
@@ -23,7 +24,9 @@ class TernaryLogicPartitioning(Property):
     def name(self) -> str:
         return "TernaryLogicPartitioning"
 
-    def check(self, context: IndexContext, client: OpenSearch) -> List[PropertyViolation]:
+    def check(
+        self, context: IndexContext, client: OpenSearch
+    ) -> List[PropertyViolation]:
         violations = []
 
         # Generate random predicate
@@ -49,54 +52,60 @@ class TernaryLogicPartitioning(Property):
             count_total = len(result_total)
 
             if count_union != count_total:
-                violations.append(PropertyViolation(
-                    property_name=self.name,
-                    query=f"Predicate: {predicate}",
-                    expected=count_total,
-                    actual=count_union,
-                    message=f"TLP partition count mismatch: {count_union} != {count_total}"
-                ))
+                violations.append(
+                    PropertyViolation(
+                        property_name=self.name,
+                        query=f"Predicate: {predicate}",
+                        expected=count_total,
+                        actual=count_union,
+                        message=f"TLP partition count mismatch: {count_union} != {count_total}",
+                    )
+                )
 
             # Verify no duplicates across partitions (row uniqueness)
             ids_true = set(self._extract_ids(result_true))
             ids_false = set(self._extract_ids(result_false))
             ids_null = set(self._extract_ids(result_null))
 
-            overlaps = (ids_true & ids_false) | (ids_true & ids_null) | (ids_false & ids_null)
+            overlaps = (
+                (ids_true & ids_false) | (ids_true & ids_null) | (ids_false & ids_null)
+            )
             if overlaps:
-                violations.append(PropertyViolation(
-                    property_name=self.name,
-                    query=f"Predicate: {predicate}",
-                    expected="Disjoint partitions",
-                    actual=f"{len(overlaps)} overlapping rows",
-                    message="TLP partitions overlap (same row in multiple partitions)"
-                ))
+                violations.append(
+                    PropertyViolation(
+                        property_name=self.name,
+                        query=f"Predicate: {predicate}",
+                        expected="Disjoint partitions",
+                        actual=f"{len(overlaps)} overlapping rows",
+                        message="TLP partitions overlap (same row in multiple partitions)",
+                    )
+                )
 
         except Exception as e:
-            violations.append(PropertyViolation(
-                property_name=self.name,
-                query=f"Predicate: {predicate}",
-                expected="Successful execution",
-                actual=str(e),
-                message=f"Query execution failed: {e}"
-            ))
+            violations.append(
+                PropertyViolation(
+                    property_name=self.name,
+                    query=f"Predicate: {predicate}",
+                    expected="Successful execution",
+                    actual=str(e),
+                    message=f"Query execution failed: {e}",
+                )
+            )
 
         return violations
 
     def _execute_ppl(self, client: OpenSearch, query: str) -> List[dict]:
         """Execute PPL query and return results"""
         response = client.transport.perform_request(
-            'POST',
-            '/_plugins/_ppl',
-            body={'query': query}
+            "POST", "/_plugins/_ppl", body={"query": query}
         )
 
         # Extract datarows from response
-        if 'datarows' in response:
-            return response['datarows']
+        if "datarows" in response:
+            return response["datarows"]
         return []
 
     def _extract_ids(self, rows: List[Any]) -> List[Any]:
         """Extract unique identifiers from result rows"""
         # Assuming rows are tuples/lists, use entire row as ID
-        return [tuple(row) if isinstance(row, list) else row for row in rows]
+        return [freeze(row) for row in rows]

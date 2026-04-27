@@ -10,6 +10,12 @@ from ppl_correctness.datagen.context import generate_contexts
 from ppl_correctness.properties.tlp import TernaryLogicPartitioning
 from ppl_correctness.properties.sorting import SortingInvariant, SortHeadEquivalence
 from ppl_correctness.properties.aggregation import AggregationConservation, MonotonicityInvariant
+from ppl_correctness.properties.atomic import (
+    GroupByConservation,
+    FieldAccessConsistency,
+    FilterAggregationConsistency,
+    FieldValuePreservation
+)
 from ppl_correctness.runner.executor import PropertyExecutor
 
 
@@ -24,7 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description='PPL Correctness Testing')
     parser.add_argument('--host', default='localhost:9200', help='OpenSearch host')
     parser.add_argument('--indices', type=int, default=5, help='Number of test indices')
-    parser.add_argument('--property', default='tlp', choices=['tlp', 'sort', 'aggregation', 'all'])
+    parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'all'])
     parser.add_argument('--iterations', type=int, default=100, help='Test iterations')
     parser.add_argument('--seed', type=int, help='Random seed for reproducibility')
 
@@ -48,6 +54,12 @@ def main():
     if args.property == 'aggregation' or args.property == 'all':
         properties.append(AggregationConservation())
         properties.append(MonotonicityInvariant())
+    if args.property == 'atomic' or args.property == 'all':
+        # Atomic properties that catch specific bugs
+        properties.append(GroupByConservation())
+        properties.append(FieldAccessConsistency())
+        properties.append(FilterAggregationConsistency())
+        properties.append(FieldValuePreservation())
 
     executor = PropertyExecutor(
         host=args.host,

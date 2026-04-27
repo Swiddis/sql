@@ -271,6 +271,15 @@ wheels = [
 ]
 
 [[package]]
+name = "gelidum"
+version = "0.10.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/b7/7b02f31532be189688509c5149caeb1e43ef192d2d11232568e04dd79051/gelidum-0.10.1.tar.gz", hash = "sha256:7979f7eaeac696cea51c25fe31e33a4bc06ec7952de0ecad593cfa8a7f38d783", size = 35129, upload-time = "2026-01-23T20:26:39.687Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/cd/83a2bea9cdedb18da7136ccf9e3bb997545e8fe90d2ecbfd8c91b235d47d/gelidum-0.10.1-py3-none-any.whl", hash = "sha256:110c118fe2547605a73a2d81676dea9959f3aaab7a0dba16e51f8249c1480091", size = 41261, upload-time = "2026-01-23T20:26:38.079Z" },
+]
+
+[[package]]
 name = "grpcio"
 version = "1.80.0"
 source = { registry = "https://pypi.org/simple" }
@@ -430,6 +439,7 @@ name = "ppl-correctness"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "gelidum" },
     { name = "hypothesis" },
     { name = "opensearch-py" },
 ]
@@ -445,6 +455,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "gelidum", specifier = ">=0.10.1" },
     { name = "hypothesis", specifier = ">=6.0.0" },
     { name = "opensearch-py", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
