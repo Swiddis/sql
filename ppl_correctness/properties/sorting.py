@@ -8,6 +8,7 @@ Sorting invariant properties.
 
 from typing import Any, List
 import random
+import ipaddress
 from opensearchpy import OpenSearch
 
 from ppl_correctness.datagen.context import IndexContext, FieldType
@@ -42,10 +43,14 @@ class SortingInvariant(Property):
             if not values:
                 return violations
 
-            # Check ordering
+            # Check ordering using type-aware comparison
             is_ascending = direction == '+'
-            for i in range(len(values) - 1):
-                if is_ascending and values[i] > values[i + 1]:
+
+            # Convert values for proper comparison if needed
+            comparable_values = self._make_comparable(values, field.type)
+
+            for i in range(len(comparable_values) - 1):
+                if is_ascending and comparable_values[i] > comparable_values[i + 1]:
                     violations.append(PropertyViolation(
                         property_name=self.name,
                         query=query,
@@ -54,7 +59,7 @@ class SortingInvariant(Property):
                         message=f"Sort order violated in ascending sort"
                     ))
                     break
-                elif not is_ascending and values[i] < values[i + 1]:
+                elif not is_ascending and comparable_values[i] < comparable_values[i + 1]:
                     violations.append(PropertyViolation(
                         property_name=self.name,
                         query=query,
@@ -74,6 +79,24 @@ class SortingInvariant(Property):
             ))
 
         return violations
+
+    def _make_comparable(self, values: List[Any], field_type: FieldType) -> List[Any]:
+        """Convert values to comparable form based on field type"""
+        if field_type == FieldType.IP:
+            # Convert IP strings to integer form for numeric comparison
+            comparable = []
+            for val in values:
+                try:
+                    # Parse IP address and convert to integer for comparison
+                    ip = ipaddress.ip_address(val)
+                    comparable.append(int(ip))
+                except (ValueError, TypeError):
+                    # If parsing fails, use string comparison as fallback
+                    comparable.append(val)
+            return comparable
+        else:
+            # For other types, values are already comparable
+            return values
 
     def _execute_ppl(self, client: OpenSearch, query: str) -> List[Any]:
         response = client.transport.perform_request(
