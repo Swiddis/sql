@@ -42,3 +42,6 @@ htmlcov/
 # Project specific
 test_index_*
 *.log
+
+# symlink to ppl docs for agents
+docs/ppl_docs
