@@ -2,13 +2,29 @@
 
 Property-based testing framework for OpenSearch PPL (Piped Processing Language), using metamorphic relations to find correctness bugs.
 
+## Quick Test for Known Bugs
+
+```bash
+# Test if known bugs are present in your OpenSearch instance
+python test_bug_coverage.py --all
+
+# Test specific bug categories
+python test_bug_coverage.py --category arrays      # Issue #5333
+python test_bug_coverage.py --category nested      # Issue #4906
+python test_bug_coverage.py --category text-keyword # Issue #4463
+python test_bug_coverage.py --category rename      # Issue #5150
+```
+
+See [BUG_HUNTING.md](BUG_HUNTING.md) for details on what bugs are tested.
+
 ## Architecture
 
 ```
 datagen/     - Generate test indices with schema and data
 generators/  - PPL query generators (context-aware)
-properties/  - Test properties (TLP, sorting, aggregation invariants)
+properties/  - Test properties (TLP, sorting, aggregation invariants, bug-specific tests)
 runner/      - Execution engine and result validation
+regression/  - Bug-specific test cases for known issues
 ```
 
 ## Testing Strategies
