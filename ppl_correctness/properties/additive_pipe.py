@@ -89,11 +89,9 @@ class AdditivePipeProperty(Property):
         """
         test_cases = []
 
-        # Get simple (non-nested, non-array) fields for safer testing
-        simple_fields = [f for f in context.fields
-                        if not f.is_array and '.' not in f.name]
-        simple_groupable = [f for f in context.get_groupable_fields()
-                           if not f.is_array and '.' not in f.name]
+        # ponytail: filter arrays (known GROUP BY explosion bug), keep everything else including nested
+        simple_fields = [f for f in context.fields if not f.is_array]
+        simple_groupable = [f for f in context.get_groupable_fields() if not f.is_array]
 
         # Test Case 1: FIELDS | WHERE (project then filter)
         # This is safer because we project simple fields first
@@ -218,10 +216,10 @@ class AdditivePipeProperty(Property):
 
         # Build mapping from schema
         # Map PPL types to OpenSearch types
-        # Note: PPL sometimes returns different type names than OpenSearch mappings
         type_mapping = {
             'integer': 'integer',
             'long': 'long',
+            'bigint': 'long',
             'float': 'float',
             'double': 'double',
             'boolean': 'boolean',
@@ -231,25 +229,58 @@ class AdditivePipeProperty(Property):
             'date': 'date',
             'timestamp': 'date',
             'ip': 'ip',
-            # Aggregation result types
-            'count': 'long',  # count() returns long
-            'sum': 'double',  # sum() returns double
-            'avg': 'double',
-            'min': 'double',
-            'max': 'double'
         }
+
+        def infer_properties(obj):
+            """Recursively infer OpenSearch properties from a Python dict."""
+            props = {}
+            for key, val in obj.items():
+                if val is None:
+                    props[key] = {'type': 'keyword'}
+                elif isinstance(val, bool):
+                    props[key] = {'type': 'boolean'}
+                elif isinstance(val, int):
+                    props[key] = {'type': 'long'}
+                elif isinstance(val, float):
+                    props[key] = {'type': 'double'}
+                elif isinstance(val, dict):
+                    props[key] = {'properties': infer_properties(val)}
+                elif isinstance(val, list):
+                    if val and isinstance(val[0], dict):
+                        # ponytail: array of objects -> nested type
+                        props[key] = {'type': 'nested', 'properties': infer_properties(val[0])}
+                    else:
+                        # ponytail: scalar array -> infer from first element
+                        props[key] = {'type': 'keyword'}
+                else:
+                    props[key] = {'type': 'keyword'}
+            return props
 
         properties = {}
         field_names = []
 
         for col_idx, col_schema in enumerate(intermediate_schema):
             field_name_raw = col_schema.get('name', f"col{col_idx}")
-            # Sanitize field name - remove parentheses and special chars that might cause issues
+            # Sanitize field name - remove parentheses and special chars
             field_name = field_name_raw.replace('()', '').replace('(', '_').replace(')', '').replace(' ', '_')
             if not field_name or field_name[0].isdigit():
                 field_name = f"col{col_idx}"
 
             field_type = col_schema.get('type', 'keyword').lower()
+
+            # Handle struct type by inspecting data
+            if field_type == 'struct':
+                sample = intermediate_result[0][col_idx] if intermediate_result and col_idx < len(intermediate_result[0]) else None
+                if isinstance(sample, dict):
+                    properties[field_name] = {'properties': infer_properties(sample)}
+                    field_names.append(field_name)
+                    continue
+                elif isinstance(sample, list) and sample and isinstance(sample[0], dict):
+                    properties[field_name] = {'type': 'nested', 'properties': infer_properties(sample[0])}
+                    field_names.append(field_name)
+                    continue
+                # Fallback for unknown struct
+                field_type = 'keyword'
 
             # Map to OpenSearch type
             os_type = type_mapping.get(field_type, 'keyword')
