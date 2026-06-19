@@ -53,17 +53,28 @@ Compare equivalent query forms:
 - `eval x=a+b | where x>5` vs `where a+b>5`
 - `stats count() by a,b` vs nested grouping
 
+### Additive Pipe Property
+Tests that PPL command chains are truly additive:
+- For any commands A and B: `source=index | A | B` should equal `materialize(source=index | A)` then `source=materialized | B`
+- Catches bugs where:
+  - Commands interact in unexpected ways
+  - Field references break across command boundaries
+  - Intermediate state isn't properly preserved
+  - Command B depends on original index structure rather than A's output
+
 ## Usage
 
 ```bash
-# Generate test data
-python -m ppl_correctness.datagen --indices 10
-
-# Run TLP tests
-python -m ppl_correctness.runner --property tlp --iterations 1000
+# Run specific property tests
+python main.py --property tlp --iterations 100
+python main.py --property atomic --iterations 100
+python main.py --property additive-pipe --iterations 50
 
 # Run all properties
-python -m ppl_correctness.runner --all
+python main.py --property all --iterations 100
+
+# Test the additive pipe property specifically
+python test_additive_pipe.py
 ```
 
 ## Dependencies

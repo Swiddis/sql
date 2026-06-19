@@ -16,6 +16,7 @@ from ppl_correctness.properties.atomic import (
     FilterAggregationConsistency,
     FieldValuePreservation
 )
+from ppl_correctness.properties.additive_pipe import AdditivePipeProperty
 from ppl_correctness.runner.executor import PropertyExecutor
 
 
@@ -30,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description='PPL Correctness Testing')
     parser.add_argument('--host', default='localhost:9200', help='OpenSearch host')
     parser.add_argument('--indices', type=int, default=5, help='Number of test indices')
-    parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'all'])
+    parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'additive-pipe', 'all'])
     parser.add_argument('--iterations', type=int, default=100, help='Test iterations')
     parser.add_argument('--seed', type=int, help='Random seed for reproducibility')
 
@@ -60,6 +61,8 @@ def main():
         properties.append(FieldAccessConsistency())
         properties.append(FilterAggregationConsistency())
         properties.append(FieldValuePreservation())
+    if args.property == 'additive-pipe' or args.property == 'all':
+        properties.append(AdditivePipeProperty())
 
     executor = PropertyExecutor(
         host=args.host,
