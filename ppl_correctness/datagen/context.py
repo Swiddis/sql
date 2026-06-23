@@ -209,13 +209,13 @@ def generate_contexts(
             subfields_dict = {}
             nested_depth = 0
 
-            # 30% chance of array field (for numeric/keyword types)
-            if field_type in (FieldType.INTEGER, FieldType.LONG, FieldType.KEYWORD) and rng.random() < 0.3:
-                is_array = True
-                field_name = f"array_{j}"
+            # ponytail: array generation disabled - bugs #5333 (GROUP BY explosion), other issues TBD
+            # if field_type in (FieldType.INTEGER, FieldType.LONG, FieldType.KEYWORD) and rng.random() < 0.3:
+            #     is_array = True
+            #     field_name = f"array_{j}"
 
             # 20% chance of nested field
-            elif rng.random() < 0.2:
+            if rng.random() < 0.2:
                 depth = rng.randint(1, 2)
                 nested_depth = depth
                 if depth == 1:
