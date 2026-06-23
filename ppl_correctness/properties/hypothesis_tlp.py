@@ -9,6 +9,7 @@ from opensearchpy import OpenSearch
 
 from ppl_correctness.datagen.context import IndexContext
 from ppl_correctness.properties.base import Property, PropertyViolation
+from ppl_correctness.known_bugs import should_skip
 
 try:
     from hypothesis import given, settings, assume, Phase
@@ -66,6 +67,10 @@ if HYPOTHESIS_AVAILABLE:
             from ppl_correctness.generators.strategies import test_scenario as scenario_strategy
 
             scenario = test_scenario.draw(scenario_strategy(self._context))
+
+            # Skip known bugs
+            skip_reason = should_skip(query=scenario['query_with_pred'])
+            assume(not skip_reason)
 
             # Execute TLP queries
             query_true = scenario['query_with_pred']

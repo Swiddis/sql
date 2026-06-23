@@ -12,6 +12,7 @@ from opensearchpy import OpenSearch
 from ppl_correctness.datagen.context import IndexContext, FieldType
 from ppl_correctness.generators.ppl import PPLQueryGenerator
 from ppl_correctness.properties.base import Property, PropertyViolation
+from ppl_correctness.known_bugs import should_skip
 
 
 class GroupByConservation(Property):
@@ -115,8 +116,9 @@ class FieldAccessConsistency(Property):
         violations = []
 
         rng = random.Random()
-        # Test a sample of fields
-        test_fields = rng.sample(context.fields, min(3, len(context.fields)))
+        # Test a sample of fields, skipping known bugs
+        test_fields = [f for f in context.fields if not should_skip(field=f)]
+        test_fields = rng.sample(test_fields, min(3, len(test_fields))) if test_fields else []
 
         for field in test_fields:
             try:
@@ -199,6 +201,9 @@ class FilterAggregationConsistency(Property):
 
         rng = random.Random()
         for field in rng.sample(test_fields, min(2, len(test_fields))):
+            # Skip known bugs
+            if should_skip(query=f"isnotnull({field.name})", field=field):
+                continue
             try:
                 # Test 1: Filter count
                 filter_query = f"source={context.name} | where isnotnull({field.name}) | stats count()"
@@ -277,7 +282,7 @@ class FieldValuePreservation(Property):
 
         rng = random.Random()
         # Test fields that are likely to have non-null values
-        test_fields = [f for f in context.fields if not f.is_array]
+        test_fields = [f for f in context.fields if not f.is_array and not should_skip(field=f)]
 
         if not test_fields:
             return violations
@@ -296,6 +301,10 @@ class FieldValuePreservation(Property):
             if groupable:
                 dedup_field = rng.choice(groupable)
                 test_query = f"source={context.name} | rename {field.name} as {alias} | dedup {dedup_field.name} | fields {alias}"
+
+                # Skip known bugs
+                if should_skip(query=test_query, field=field):
+                    return violations
                 test_result = self._execute_ppl(client, test_query)
                 test_null_count = sum(1 for row in test_result if row[0] is None)
 

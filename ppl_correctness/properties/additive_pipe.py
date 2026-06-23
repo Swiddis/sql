@@ -11,12 +11,14 @@ materialization doesn't change results.
 from typing import Any, List, Optional, Dict
 import random
 import hashlib
+import uuid
 from opensearchpy import OpenSearch
 from opensearchpy.helpers import bulk
 
 from ppl_correctness.datagen.context import IndexContext, Field, FieldType
 from ppl_correctness.generators.ppl import PPLQueryGenerator
 from ppl_correctness.properties.base import Property, PropertyViolation
+from ppl_correctness.known_bugs import should_skip
 
 
 class AdditivePipeProperty(Property):
@@ -89,9 +91,9 @@ class AdditivePipeProperty(Property):
         """
         test_cases = []
 
-        # ponytail: filter arrays (known GROUP BY explosion bug), keep everything else including nested
-        simple_fields = [f for f in context.fields if not f.is_array]
-        simple_groupable = [f for f in context.get_groupable_fields() if not f.is_array]
+        # Filter fields that hit known bugs
+        simple_fields = [f for f in context.fields if not should_skip(field=f)]
+        simple_groupable = [f for f in context.get_groupable_fields() if not should_skip(field=f)]
 
         # Test Case 1: FIELDS | WHERE (project then filter)
         # This is safer because we project simple fields first
@@ -184,8 +186,11 @@ class AdditivePipeProperty(Property):
 
         finally:
             # Clean up temp index
-            if client.indices.exists(index=temp_index_name):
-                client.indices.delete(index=temp_index_name)
+            try:
+                if client.indices.exists(index=temp_index_name):
+                    client.indices.delete(index=temp_index_name)
+            except:
+                pass  # Already deleted or never created
 
         return None
 
@@ -206,13 +211,15 @@ class AdditivePipeProperty(Property):
         if not intermediate_result:
             return None
 
-        # Generate unique temp index name based on command hash
-        hash_suffix = hashlib.md5(cmd_a.encode()).hexdigest()[:8]
-        temp_index_name = f"temp_pipe_{hash_suffix}"
+        # Generate unique temp index name with UUID to avoid collisions
+        temp_index_name = f"temp_pipe_{uuid.uuid4().hex[:8]}"
 
-        # Delete if exists
-        if client.indices.exists(index=temp_index_name):
-            client.indices.delete(index=temp_index_name)
+        # Delete if exists (shouldn't with UUID, but defensive)
+        try:
+            if client.indices.exists(index=temp_index_name):
+                client.indices.delete(index=temp_index_name)
+        except:
+            pass
 
         # Build mapping from schema
         # Map PPL types to OpenSearch types

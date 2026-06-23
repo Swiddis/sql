@@ -77,6 +77,26 @@ python main.py --property all --iterations 100
 python test_additive_pipe.py
 ```
 
+## Known Bug Skipping
+
+Centralized registry in `ppl_correctness/known_bugs.py` tracks upstream bugs and skips affected test cases:
+
+```python
+from ppl_correctness.known_bugs import should_skip, register_bug
+from hypothesis import assume
+
+# In property tests
+skip_reason = should_skip(query=ppl_query, field=field_obj)
+if skip_reason:
+    assume(False)  # Hypothesis skips this case
+
+# Register new bugs at runtime
+register_bug('bug_name', 'Issue #1234: description', 
+             lambda ctx: ctx.field.is_array)
+```
+
+Current known bugs tracked in `KNOWN_BUGS` list with issue references.
+
 ## Dependencies
 
 - Python 3.11+
