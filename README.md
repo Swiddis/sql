@@ -2,6 +2,8 @@
 
 Property-based testing framework for OpenSearch PPL (Piped Processing Language), using metamorphic relations to find correctness bugs.
 
+**📚 Full documentation:** [docs/INDEX.md](docs/INDEX.md)
+
 ## Quick Test for Known Bugs
 
 ```bash
@@ -15,7 +17,7 @@ python test_bug_coverage.py --category text-keyword # Issue #4463
 python test_bug_coverage.py --category rename      # Issue #5150
 ```
 
-See [BUG_HUNTING.md](BUG_HUNTING.md) for details on what bugs are tested.
+See [docs/BUG_HUNTING.md](docs/BUG_HUNTING.md) for details on what bugs are tested.
 
 ## Architecture
 
