@@ -24,6 +24,7 @@ from ppl_correctness.properties.atomic import (
     FieldValuePreservation
 )
 from ppl_correctness.properties.additive_pipe import AdditivePipeProperty
+from ppl_correctness.properties.pushdown import PushdownProperty, TimeRangePushdownProperty
 from ppl_correctness.runner.executor import PropertyExecutor
 
 
@@ -40,7 +41,7 @@ def main():
     parser.add_argument('--username', help='HTTP basic auth username')
     parser.add_argument('--password', help='HTTP basic auth password')
     parser.add_argument('--indices', type=int, default=5, help='Number of test indices')
-    parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'additive-pipe', 'all'])
+    parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'additive-pipe', 'pushdown', 'all'])
     parser.add_argument('--iterations', type=int, default=100, help='Test iterations')
     parser.add_argument('--seed', type=int, help='Random seed for reproducibility')
 
@@ -79,6 +80,9 @@ def main():
         properties.append(FieldValuePreservation())
     if args.property == 'additive-pipe' or args.property == 'all':
         properties.append(AdditivePipeProperty())
+    if args.property == 'pushdown' or args.property == 'all':
+        properties.append(PushdownProperty())
+        properties.append(TimeRangePushdownProperty())
 
     executor = PropertyExecutor(
         host=args.host,
