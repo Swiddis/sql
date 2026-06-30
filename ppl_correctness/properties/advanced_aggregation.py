@@ -36,7 +36,7 @@ class AvgConservation(Property):
         group_field = rng.choice(groupable)
 
         ungrouped_query = f"source={context.name} | stats avg({field.name})"
-        grouped_query = f"source={context.name} | stats avg({field.name}), count() by {group_field.name}"
+        grouped_query = f"source={context.name} | stats avg({field.name}), count({field.name}) by {group_field.name}"
 
         try:
             ungrouped = self._execute_ppl(client, ungrouped_query)
@@ -45,12 +45,15 @@ class AvgConservation(Property):
             if ungrouped and grouped:
                 ungrouped_avg = ungrouped[0][0]
                 if ungrouped_avg is None:
-                    return violations  # All nulls
+                    return violations
 
-                # Weighted average: sum(avg_i * count_i) / sum(count_i)
-                total_weighted = sum((row[0] or 0) * row[1] for row in grouped)
+                # ponytail: count(field) not count() - AVG excludes nulls
+                total_weighted = sum(row[0] * row[1] for row in grouped if row[0] is not None)
                 total_count = sum(row[1] for row in grouped)
-                weighted_avg = total_weighted / total_count if total_count > 0 else 0
+                weighted_avg = total_weighted / total_count if total_count > 0 else None
+
+                if weighted_avg is None:
+                    return violations
 
                 tolerance = abs(ungrouped_avg) * 0.001 + 0.001
                 if abs(ungrouped_avg - weighted_avg) > tolerance:
@@ -131,7 +134,7 @@ class StddevInvariant(Property):
 
 
 class DistinctCountInvariant(Property):
-    """Verify dc(group_field) equals number of groups returned"""
+    """Verify dc(group_field) approximates number of groups returned"""
 
     @property
     def name(self) -> str:
@@ -158,13 +161,15 @@ class DistinctCountInvariant(Property):
                 distinct_count = dc_result[0][0]
                 num_groups = len(group_result)
 
-                if distinct_count != num_groups:
+                # ponytail: dc is approximate (HyperLogLog), allow 1% or 1 error
+                threshold = max(int(num_groups * 0.01), 1)
+                if abs(distinct_count - num_groups) > threshold:
                     violations.append(PropertyViolation(
                         property_name=self.name,
                         query=f"DC: {dc_query}, Groups: {group_query}",
                         expected=num_groups,
                         actual=distinct_count,
-                        message=f"dc({group_field.name})={distinct_count} but {num_groups} groups returned"
+                        message=f"dc({group_field.name})={distinct_count} but {num_groups} groups (threshold={threshold})"
                     ))
 
         except Exception as e:
