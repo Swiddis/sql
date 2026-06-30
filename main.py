@@ -10,6 +10,13 @@ from ppl_correctness.datagen.context import generate_contexts
 from ppl_correctness.properties.tlp import TernaryLogicPartitioning
 from ppl_correctness.properties.sorting import SortingInvariant, SortHeadEquivalence
 from ppl_correctness.properties.aggregation import AggregationConservation, MonotonicityInvariant
+from ppl_correctness.properties.advanced_aggregation import (
+    AvgConservation,
+    StddevInvariant,
+    DistinctCountInvariant,
+    StringDateMinMax,
+    HighCardinalityGroupBy
+)
 from ppl_correctness.properties.atomic import (
     GroupByConservation,
     FieldAccessConsistency,
@@ -30,6 +37,8 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser(description='PPL Correctness Testing')
     parser.add_argument('--host', default='localhost:9200', help='OpenSearch host')
+    parser.add_argument('--username', help='HTTP basic auth username')
+    parser.add_argument('--password', help='HTTP basic auth password')
     parser.add_argument('--indices', type=int, default=5, help='Number of test indices')
     parser.add_argument('--property', default='all', choices=['tlp', 'sort', 'aggregation', 'atomic', 'additive-pipe', 'all'])
     parser.add_argument('--iterations', type=int, default=100, help='Test iterations')
@@ -40,6 +49,8 @@ def main():
     logger.info(f"Generating {args.indices} test contexts...")
     contexts = generate_contexts(
         host=args.host,
+        username=args.username,
+        password=args.password,
         num_contexts=args.indices,
         seed=args.seed
     )
@@ -55,6 +66,11 @@ def main():
     if args.property == 'aggregation' or args.property == 'all':
         properties.append(AggregationConservation())
         properties.append(MonotonicityInvariant())
+        properties.append(AvgConservation())
+        properties.append(StddevInvariant())
+        properties.append(DistinctCountInvariant())
+        properties.append(StringDateMinMax())
+        properties.append(HighCardinalityGroupBy())
     if args.property == 'atomic' or args.property == 'all':
         # Atomic properties that catch specific bugs
         properties.append(GroupByConservation())
@@ -66,6 +82,8 @@ def main():
 
     executor = PropertyExecutor(
         host=args.host,
+        username=args.username,
+        password=args.password,
         contexts=contexts,
         properties=properties
     )

@@ -523,12 +523,17 @@ def generate_correlated_pair_lookup(
 def generate_contexts(
     host: str,
     num_contexts: int = 5,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None
 ) -> List[IndexContext]:
     """Generate random test index contexts with diverse field types"""
     rng = random.Random(seed)
 
-    client = OpenSearch([host])
+    if username and password:
+        client = OpenSearch([host], http_auth=(username, password), use_ssl=True, verify_certs=True)
+    else:
+        client = OpenSearch([host])
     contexts = []
 
     for i in range(num_contexts):

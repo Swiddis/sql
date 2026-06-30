@@ -2,7 +2,7 @@
 
 Property-based testing framework for OpenSearch PPL (Piped Processing Language), using metamorphic relations to find correctness bugs.
 
-**📚 Full documentation:** [docs/INDEX.md](docs/INDEX.md)
+**Full documentation:** [docs/INDEX.md](docs/INDEX.md)
 
 ## Quick Test for Known Bugs
 

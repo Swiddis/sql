@@ -61,6 +61,15 @@ KNOWN_BUGS = [
             'keyword' in getattr(ctx.field, 'subfields', {})
         )
     ),
+    KnownBug(
+        name="boolean_aggregation_unsupported",
+        reason="approx_distinct not implemented for BOOLEAN type",
+        check=lambda ctx: (
+            hasattr(ctx, 'query') and 'approx_distinct' in ctx.query.lower() and
+            hasattr(ctx, 'field') and getattr(ctx.field, 'type', None) and
+            str(getattr(ctx.field, 'type', '')).endswith('BOOLEAN')
+        )
+    ),
 ]
 
 

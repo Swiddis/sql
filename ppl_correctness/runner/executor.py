@@ -32,9 +32,14 @@ class PropertyExecutor:
         self,
         host: str,
         contexts: List[IndexContext],
-        properties: List[Property]
+        properties: List[Property],
+        username: Optional[str] = None,
+        password: Optional[str] = None
     ):
-        self.client = OpenSearch([host])
+        if username and password:
+            self.client = OpenSearch([host], http_auth=(username, password), use_ssl=True, verify_certs=True)
+        else:
+            self.client = OpenSearch([host])
         self.contexts = contexts
         self.properties = properties
 
