@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nullable;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.search.CreatePitRequest;
 import org.opensearch.action.search.DeletePitRequest;
 import org.opensearch.index.IndexNotFoundException;
@@ -172,5 +174,13 @@ public interface OpenSearchClient {
         .context("index_pattern", joined)
         .details(details)
         .build();
+  }
+
+  /**
+   * Execute a bulk write request (used by the collect write sink). Default throws: only the
+   * node/rest clients that back an in-cluster write override it.
+   */
+  default BulkResponse bulk(BulkRequest bulkRequest) {
+    throw new UnsupportedOperationException("bulk write is not supported by this client");
   }
 }

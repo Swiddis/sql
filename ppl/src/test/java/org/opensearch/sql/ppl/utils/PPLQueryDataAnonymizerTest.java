@@ -285,6 +285,13 @@ public class PPLQueryDataAnonymizerTest {
   }
 
   @Test
+  public void testCollectCommand() {
+    assertEquals(
+        "source=table | collect index=table id=identifier testmode=true",
+        anonymize("source=t | collect index=dest id=a,b testmode=true"));
+  }
+
+  @Test
   public void testReverseCommand() {
     assertEquals("source=table | reverse", anonymize("source=t | reverse"));
   }

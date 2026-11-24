@@ -50,6 +50,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
+import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.ViewExpanders;
 import org.apache.calcite.rel.RelCollation;
@@ -124,6 +125,7 @@ import org.opensearch.sql.ast.tree.AppendPipe;
 import org.opensearch.sql.ast.tree.Bin;
 import org.opensearch.sql.ast.tree.Chart;
 import org.opensearch.sql.ast.tree.CloseCursor;
+import org.opensearch.sql.ast.tree.Collect;
 import org.opensearch.sql.ast.tree.Convert;
 import org.opensearch.sql.ast.tree.Dedupe;
 import org.opensearch.sql.ast.tree.Eval;
@@ -177,6 +179,7 @@ import org.opensearch.sql.calcite.plan.AbstractOpenSearchTable;
 import org.opensearch.sql.calcite.plan.AliasFieldsWrappable;
 import org.opensearch.sql.calcite.plan.HighlightPushDown;
 import org.opensearch.sql.calcite.plan.OpenSearchConstants;
+import org.opensearch.sql.calcite.plan.rel.LogicalCollectSink;
 import org.opensearch.sql.calcite.plan.rel.LogicalGraphLookup;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit.SystemLimitType;
@@ -907,6 +910,41 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   public RelNode visitHead(Head node, CalcitePlanContext context) {
     visitChildren(node, context);
     context.relBuilder.limit(node.getFrom(), node.getSize());
+    return context.relBuilder.peek();
+  }
+
+  @Override
+  public RelNode visitCollect(Collect node, CalcitePlanContext context) {
+    visitChildren(node, context);
+    if (node.getIndexName().startsWith(".")) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect cannot write to system or hidden index [%s]; dot-prefixed indices are"
+                  + " refused",
+              node.getIndexName()));
+    }
+    // testmode is a dry run: emit the rows, but skip the write and destination resolution.
+    if (node.isTestmode()) {
+      return context.relBuilder.peek();
+    }
+    RelNode child = context.relBuilder.build();
+    RelOptSchema relOptSchema = context.relBuilder.getRelOptSchema();
+    RelOptTable dest = relOptSchema.getTableForMember(List.of(node.getIndexName()));
+    if (dest == null) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect destination index [%s] does not exist; collect requires a pre-existing"
+                  + " destination index",
+              node.getIndexName()));
+    }
+    List<String> inputFields = child.getRowType().getFieldNames();
+    for (String f : node.getIdFields()) {
+      if (!inputFields.contains(f)) {
+        throw new SemanticCheckException(
+            String.format("collect id field [%s] is not a column of the input %s", f, inputFields));
+      }
+    }
+    context.relBuilder.push(LogicalCollectSink.create(child, dest, node.getIdFields()));
     return context.relBuilder.peek();
   }
 

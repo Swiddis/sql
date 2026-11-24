@@ -11,6 +11,8 @@ import static org.opensearch.sql.ast.dsl.AstDSL.qualifiedName;
 import static org.opensearch.sql.calcite.utils.CalciteUtils.getOnlyForCalciteException;
 import static org.opensearch.sql.lang.PPLLangSpec.PPL_SPEC;
 import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.BinCommandContext;
+import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.CollectCommandContext;
+import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.CollectOptionContext;
 import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.DedupCommandContext;
 import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.DescribeCommandContext;
 import static org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.DynamicSourceClauseContext;
@@ -80,6 +82,7 @@ import org.opensearch.sql.ast.tree.Append;
 import org.opensearch.sql.ast.tree.AppendCol;
 import org.opensearch.sql.ast.tree.AppendPipe;
 import org.opensearch.sql.ast.tree.Chart;
+import org.opensearch.sql.ast.tree.Collect;
 import org.opensearch.sql.ast.tree.Convert;
 import org.opensearch.sql.ast.tree.CountBin;
 import org.opensearch.sql.ast.tree.Dedupe;
@@ -233,10 +236,40 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
 
   @Override
   public UnresolvedPlan visitQueryStatement(OpenSearchPPLParser.QueryStatementContext ctx) {
+    requireCollectLast(ctx);
     UnresolvedPlan pplCommand = visit(ctx.pplCommands());
     return ctx.commands().stream()
         .map(this::visit)
         .reduce(pplCommand, (r, e) -> e.attach(e instanceof Join ? projectExceptMeta(r) : r));
+  }
+
+  /**
+   * collect writes eagerly and returns only write counts, so it must be the last command of the
+   * top-level pipeline: anywhere else (mid-pipeline, or inside a subsearch) it would write rows the
+   * user never sees as the query result.
+   */
+  private static void requireCollectLast(OpenSearchPPLParser.QueryStatementContext ctx) {
+    List<OpenSearchPPLParser.CommandsContext> cmds = ctx.commands();
+    ParseTree last = cmds.isEmpty() ? null : cmds.getLast().getChild(0);
+    ParseTree allowed = last instanceof CollectCommandContext ? last : null;
+    if (containsCollect(ctx, allowed)) {
+      throw new SyntaxCheckException("collect must be the last command of the query");
+    }
+  }
+
+  private static boolean containsCollect(ParseTree node, ParseTree allowed) {
+    if (node == allowed) {
+      return false;
+    }
+    if (node instanceof CollectCommandContext) {
+      return true;
+    }
+    for (int i = 0; i < node.getChildCount(); i++) {
+      if (containsCollect(node.getChild(i), allowed)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override
@@ -758,6 +791,27 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
     Integer size = ctx.number != null ? Integer.parseInt(ctx.number.getText()) : 10;
     Integer from = ctx.from != null ? Integer.parseInt(ctx.from.getText()) : 0;
     return new Head(size, from);
+  }
+
+  /** Collect command visitor (write sink): destination index, optional {@code id=} and testmode. */
+  @Override
+  public UnresolvedPlan visitCollectCommand(CollectCommandContext ctx) {
+    String indexName = StringUtils.unquoteIdentifier(ctx.tableSourceClause().getText());
+    Collect collect = new Collect(indexName);
+    for (CollectOptionContext opt : ctx.collectOption()) {
+      if (opt.testmode != null) {
+        collect.setTestmode(Boolean.parseBoolean(opt.testmode.getText()));
+      } else {
+        String name = StringUtils.unquoteIdentifier(opt.idOption.getText());
+        if (!"id".equalsIgnoreCase(name)) {
+          throw new SyntaxCheckException(
+              String.format("collect: unknown option [%s]; supported: id, testmode", name));
+        }
+        collect.setIdFields(
+            opt.idFields.stream().map(f -> StringUtils.unquoteIdentifier(f.getText())).toList());
+      }
+    }
+    return collect;
   }
 
   /** Bin command visitor. */

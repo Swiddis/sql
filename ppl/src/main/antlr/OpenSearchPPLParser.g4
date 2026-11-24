@@ -64,6 +64,7 @@ commands
    | eventstatsCommand
    | streamstatsCommand
    | dedupCommand
+   | collectCommand
    | sortCommand
    | evalCommand
    | foreachCommand
@@ -119,6 +120,7 @@ commandName
    | EVENTSTATS
    | STREAMSTATS
    | DEDUP
+   | COLLECT
    | SORT
    | EVAL
    | FOREACH
@@ -163,6 +165,16 @@ commandName
 
 searchCommand
    : (SEARCH)? (searchExpression)* fromClause (searchExpression)*     # searchFrom
+   ;
+
+// collect: terminal write sink — append pipeline rows to a pre-existing destination index.
+collectCommand
+   : COLLECT INDEX EQUAL tableSourceClause collectOption*
+   ;
+
+collectOption
+   : TESTMODE EQUAL testmode = booleanLiteral
+   | idOption = ident EQUAL idFields += qualifiedName (COMMA idFields += qualifiedName)*
    ;
 
 searchExpression
@@ -1755,6 +1767,7 @@ searchableKeyWord
    | CONTAINS
    | EXISTS
    | SOURCE
+   | TESTMODE
    | INDEX
    | A
    | ASC

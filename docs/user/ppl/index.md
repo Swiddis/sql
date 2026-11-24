@@ -92,6 +92,7 @@ source=accounts
 | [mvexpand command](cmd/mvexpand.md) | 3.6                | stable (since 3.6)       | No | Expand a multi-valued field into separate documents (one per value). |
 | [graphlookup command](cmd/graphlookup.md) | 3.6 | experimental (since 3.6) | No | Performs recursive graph traversal on a collection using a BFS algorithm.|
 | [xyseries command](cmd/xyseries.md) | 3.8 | experimental (since 3.8) | Partial | Converts row-oriented grouped results into a wide table format suitable for chart visualizations. One field serves as the X axis (row key), one field provides pivot values for generating output column names, and one or more data fields fill the pivoted cells. Only rows matching the explicitly provided pivot values in the `in` clause are included. |
+| [collect command](cmd/collect.md) | 3.10 | experimental (since 3.10) | No | Write pipeline results to a pre-existing destination index. |
 
   - [Syntax](cmd/syntax.md) - PPL query structure and command syntax formatting  
 * **Functions**  
