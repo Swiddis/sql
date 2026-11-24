@@ -28,6 +28,7 @@ import static org.opensearch.sql.util.MatcherUtils.assertYamlEqualsIgnoreId;
 import static org.opensearch.sql.util.MatcherUtils.verifyErrorMessageContains;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import org.apache.commons.text.StringEscapeUtils;
 import org.json.JSONArray;
@@ -2999,6 +3000,27 @@ public class CalciteExplainIT extends ExplainIT {
             && logical.contains("balance_double")
             && logical.contains("*($")
             && logical.contains(", 2)"));
+  }
+
+  @Test
+  public void testCollectExplainDoesNotWrite() throws IOException {
+    String dest = "collect_explain_dest";
+    Request create = new Request("PUT", "/" + dest);
+    create.setJsonEntity("{\"mappings\":{\"properties\":{\"age\":{\"type\":\"integer\"}}}}");
+    client().performRequest(create);
+    String query =
+        StringUtils.format(
+            "source=%s | fields age | collect index=%s id=age", TEST_INDEX_BANK, dest);
+    String logical = logicalPlan(explainQueryYaml(query));
+    Assert.assertTrue(
+        "Expected logical plan to contain the collect sink",
+        logical.contains("LogicalCollectSink"));
+    client().performRequest(new Request("POST", "/" + dest + "/_refresh"));
+    Response count = client().performRequest(new Request("GET", "/" + dest + "/_count"));
+    Assert.assertTrue(
+        "explain must not write to the destination",
+        new String(count.getEntity().getContent().readAllBytes(), StandardCharsets.UTF_8)
+            .contains("\"count\":0"));
   }
 
   /**

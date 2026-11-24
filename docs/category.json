@@ -13,6 +13,7 @@
     "user/ppl/cmd/addtotals.md",
     "user/ppl/cmd/addcoltotals.md",
     "user/ppl/cmd/bin.md",
+    "user/ppl/cmd/collect.md",
     "user/ppl/cmd/dedup.md",
     "user/ppl/cmd/describe.md",
     "user/ppl/cmd/eventstats.md",

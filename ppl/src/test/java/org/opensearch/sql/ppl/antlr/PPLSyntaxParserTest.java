@@ -24,6 +24,18 @@ public class PPLSyntaxParserTest {
   @Rule public final ExpectedException exceptionRule = ExpectedException.none();
 
   @Test
+  public void testCollectCommandShouldPass() {
+    assertNotEquals(null, new PPLSyntaxParser().parse("source=t | collect index=d"));
+    assertNotEquals(
+        null, new PPLSyntaxParser().parse("source=t | collect index=d id=a, b testmode=true"));
+  }
+
+  @Test(expected = SyntaxCheckException.class)
+  public void testCollectCommandWithoutIndexShouldFail() {
+    new PPLSyntaxParser().parse("source=t | collect d");
+  }
+
+  @Test
   public void testSearchCommandShouldPass() {
     ParseTree tree = new PPLSyntaxParser().parse("search source=t a=1 b=2");
     assertNotEquals(null, tree);
