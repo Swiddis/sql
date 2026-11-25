@@ -27,6 +27,7 @@ import org.junit.Test;
 import org.opensearch.sql.calcite.plan.rel.CollectTarget;
 import org.opensearch.sql.calcite.plan.rel.LogicalCollectSink;
 import org.opensearch.sql.common.antlr.SyntaxCheckException;
+import org.opensearch.sql.common.error.ErrorReport;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.exception.SemanticCheckException;
 
@@ -281,7 +282,11 @@ public class CalcitePPLCollectTest extends CalcitePPLAbstractTest {
     for (String ppl :
         List.of(
             "source=EMP | collect index=DEST", "source=EMP | collect index=DEST testmode=true")) {
-      assertSemanticError(ppl, "plugins.ppl.write_commands.enable");
+      // The message is in reason as well as details, so a client that shows only reason has it.
+      ErrorReport e = assertThrows(ErrorReport.class, () -> getRelNode(ppl));
+      assertTrue(e.getCause() instanceof SemanticCheckException);
+      assertTrue(e.getReason().contains("plugins.ppl.write_commands.enable"));
+      assertTrue(e.getDetails().contains("plugins.ppl.write_commands.enable"));
     }
   }
 

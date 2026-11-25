@@ -139,6 +139,8 @@ import org.opensearch.sql.ast.tree.Xyseries;
 import org.opensearch.sql.calcite.plan.OpenSearchConstants;
 import org.opensearch.sql.common.antlr.AstBuildGuard;
 import org.opensearch.sql.common.antlr.SyntaxCheckException;
+import org.opensearch.sql.common.error.ErrorCode;
+import org.opensearch.sql.common.error.ErrorReport;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.common.setting.Settings.Key;
 import org.opensearch.sql.common.utils.StringUtils;
@@ -834,11 +836,18 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
   private void requireWriteCommandsEnabled(String command) {
     if (settings != null
         && Boolean.FALSE.equals(settings.getSettingValue(Key.PPL_WRITE_COMMANDS_ENABLED))) {
-      throw new SemanticCheckException(
+      String message =
           String.format(
               "%s is disabled on this cluster: write commands are off. Set %s to true to enable"
                   + " them.",
-              command, Key.PPL_WRITE_COMMANDS_ENABLED.getKeyValue()));
+              command, Key.PPL_WRITE_COMMANDS_ENABLED.getKeyValue());
+      // The message goes in `reason` too: other SemanticCheckExceptions publish the generic
+      // "Invalid Query" there, which hides the setting name from clients that show only reason.
+      throw ErrorReport.wrap(new SemanticCheckException(message))
+          .code(ErrorCode.SEMANTIC_ERROR)
+          .reason(message)
+          .details(message)
+          .build();
     }
   }
 
