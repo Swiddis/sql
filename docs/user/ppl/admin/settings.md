@@ -495,6 +495,45 @@ Expected output:
 ```
   
 
+## plugins.ppl.write_commands.enable
+
+### Version
+
+3.10
+
+### Description
+
+Controls PPL commands that write to indices, such as `collect`. When `false`, such a query is refused before it runs (including `testmode` and `explain`), with an error that names this setting. When `true`, the user's index write permissions decide.
+1. The default value is true.
+2. This setting is node scope.
+3. This setting can be updated dynamically.
+
+### Example
+
+```bash ignore
+curl -sS -H 'Content-Type: application/json' \
+-X PUT localhost:9200/_plugins/_query/settings \
+-d '{"transient" : {"plugins.ppl.write_commands.enable" : "false"}}'
+```
+
+Expected output:
+
+```json
+{
+  "acknowledged": true,
+  "persistent": {},
+  "transient": {
+    "plugins": {
+      "ppl": {
+        "write_commands": {
+          "enable": "false"
+        }
+      }
+    }
+  }
+}
+```
+
 ## search.insights.top_queries.ppl.enabled
 
 ### Version
