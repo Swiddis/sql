@@ -932,7 +932,12 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     for (String f : node.getIdFields()) {
       if (!inputFields.contains(f)) {
         throw new SemanticCheckException(
-            String.format("collect id field [%s] is not a column of the input %s", f, inputFields));
+            String.format(
+                "collect id field [%s] is not a column of the input %s",
+                f,
+                inputFields.stream()
+                    .filter(c -> !OpenSearchConstants.METADATAFIELD_TYPE_MAP.containsKey(c))
+                    .toList()));
       }
     }
     // testmode is a dry run: the same checks as a write, then emit the rows the write would send.
