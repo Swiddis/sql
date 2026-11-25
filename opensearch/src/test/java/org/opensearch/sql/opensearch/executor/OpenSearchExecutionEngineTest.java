@@ -9,6 +9,7 @@ import static com.google.common.collect.ImmutableMap.of;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -45,7 +46,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.opensearch.OpenSearchStatusException;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.sql.common.response.ResponseListener;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.data.model.ExprValue;
@@ -273,6 +276,28 @@ class OpenSearchExecutionEngineTest {
     assertTrue(plan.hasOpen);
     assertEquals(expected, actual);
     assertTrue(plan.hasClosed);
+  }
+
+  /**
+   * Would have caught the collect error body: "java.sql.SQLException: ..." and RuntimeException.
+   */
+  @Test
+  void execution_failure_surfaces_opensearch_status_exception_from_the_sql_exception_chain() {
+    OpenSearchStatusException cause =
+        new OpenSearchStatusException("collect failed", RestStatus.FORBIDDEN);
+    SQLException sql = new SQLException("exception while executing query: collect failed", cause);
+
+    assertSame(cause, OpenSearchExecutionEngine.executionFailure(sql));
+  }
+
+  @Test
+  void execution_failure_wraps_other_sql_exceptions() {
+    SQLException sql = new SQLException("exception while executing query");
+
+    RuntimeException wrapped = OpenSearchExecutionEngine.executionFailure(sql);
+
+    assertEquals(RuntimeException.class, wrapped.getClass());
+    assertSame(sql, wrapped.getCause());
   }
 
   @Test

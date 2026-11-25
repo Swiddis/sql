@@ -97,6 +97,10 @@ public class CollectPermissionsIT extends SecurityTestBase {
                     "source=" + SRC + " | fields id | collect index=" + DEST, READER));
     org.junit.Assert.assertEquals(403, e.getResponse().getStatusLine().getStatusCode());
     verifyErrorMessageContains(e, "rows_written=0");
+    String body = org.opensearch.sql.legacy.TestUtils.getResponseBody(e.getResponse(), true);
+    org.junit.Assert.assertFalse(body, body.contains("java.sql.SQLException"));
+    org.junit.Assert.assertFalse(
+        body, body.replaceAll("\\s", "").contains("\"type\":\"RuntimeException\""));
     org.junit.Assert.assertEquals(before, destCount());
   }
 }
