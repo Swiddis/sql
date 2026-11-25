@@ -10,6 +10,7 @@ import java.util.List;
 import lombok.Getter;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
 import org.apache.calcite.adapter.enumerable.EnumerableRelImplementor;
+import org.apache.calcite.adapter.enumerable.JavaRowFormat;
 import org.apache.calcite.adapter.enumerable.PhysType;
 import org.apache.calcite.adapter.enumerable.PhysTypeImpl;
 import org.apache.calcite.linq4j.Enumerable;
@@ -54,6 +55,9 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
 
   /** The column names as the query wrote them; see {@link LogicalCollectSink#getFieldNames}. */
   private final List<String> fieldNames;
+
+  /** Whether the input's rows are bare column values (single column), set by {@link #implement}. */
+  private Boolean scalarRow;
 
   public EnumerableCollectSink(
       RelOptCluster cluster,
@@ -101,6 +105,7 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
     // input shape; a bare scan's own scan() still drives unbounded PIT paging.
     BlockBuilder builder = new BlockBuilder();
     Result inputResult = implementor.visitChild(this, 0, (EnumerableRel) getInput(), pref);
+    scalarRow = inputResult.physType.getFormat() == JavaRowFormat.SCALAR;
     PhysType physType =
         PhysTypeImpl.of(implementor.getTypeFactory(), getRowType(), pref.preferArray());
     Expression inputEnumerable = builder.append("inputEnumerable", inputResult.block);
@@ -120,7 +125,8 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
             fieldNames,
             fields.stream().map(RelDataTypeField::getType).toList(),
             idFields,
-            BATCH_SIZE);
+            BATCH_SIZE,
+            scalarRow);
     try (var rows = input.enumerator()) {
       while (rows.moveNext()) {
         writer.add(rows.current());

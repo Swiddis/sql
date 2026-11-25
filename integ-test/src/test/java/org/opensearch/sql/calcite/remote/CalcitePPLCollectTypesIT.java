@@ -122,4 +122,19 @@ public class CalcitePPLCollectTypesIT extends PPLIntegTestCase {
                         + " collect index=collect_t_id_dst id=a"));
     assertTrue(e.getMessage(), e.getMessage().contains("are all null"));
   }
+
+  /** Review bug 11: a single-column input whose value is a struct is written as that column. */
+  @Test
+  public void testSingleStructColumnIsWrittenAsTheColumn() throws IOException {
+    String mapping =
+        "{\"mappings\":{\"properties\":{\"o\":{\"properties\":{\"a\":{\"type\":\"keyword\"},"
+            + "\"b\":{\"type\":\"integer\"}}}}}}";
+    put("/collect_t_one_src", mapping);
+    put("/collect_t_one_dst", mapping);
+    put("/collect_t_one_src/_doc/1?refresh=true", "{\"o\":{\"a\":\"x\",\"b\":2}}");
+    executeQuery("source=collect_t_one_src | fields o | collect index=collect_t_one_dst");
+    JSONObject o = source("collect_t_one_dst").getJSONObject("o");
+    assertEquals("x", o.getString("a"));
+    assertEquals(2, o.getInt("b"));
+  }
 }
