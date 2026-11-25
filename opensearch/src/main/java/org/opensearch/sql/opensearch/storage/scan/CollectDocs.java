@@ -9,8 +9,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
-import java.time.Period;
 import java.time.temporal.TemporalAmount;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,6 +22,7 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.locationtech.jts.geom.Point;
 import org.opensearch.sql.calcite.type.AbstractExprRelDataType;
+import org.opensearch.sql.calcite.utils.datetime.DateTimeConversionUtils;
 import org.opensearch.sql.data.model.ExprValue;
 import org.opensearch.sql.data.type.ExprCoreType;
 import org.opensearch.sql.opensearch.storage.OpenSearchIndex;
@@ -117,11 +116,11 @@ final class CollectDocs {
       return t.toString();
     }
     if (value instanceof Number n && isInterval(type)) {
-      // Calcite holds INTERVAL values as millis (day-time) or months (year-month); the unit is only
-      // in the type.
-      return SqlTypeName.YEAR_INTERVAL_TYPES.contains(type.getSqlTypeName())
-          ? Period.ofMonths(n.intValue()).normalized().toString()
-          : Duration.ofMillis(n.longValue()).toString();
+      // PPL holds an INTERVAL value as the count of its qualifier's unit (INTERVAL 5 MINUTE is 5);
+      // the unit is only in the type. Same conversion as date_add.
+      return DateTimeConversionUtils.convertToTemporalAmount(
+              n.longValue(), type.getIntervalQualifier().getUnit())
+          .toString();
     }
     if (value instanceof String s && isTimestamp(type)) {
       return toIsoUtc(s);

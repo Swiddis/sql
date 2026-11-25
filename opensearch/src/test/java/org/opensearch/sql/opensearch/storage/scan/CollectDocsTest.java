@@ -215,10 +215,10 @@ class CollectDocsTest {
     RelDataType t =
         TF.createSqlIntervalType(
             new SqlIntervalQualifier(TimeUnit.MINUTE, null, SqlParserPos.ZERO));
-    assertEquals("PT5M", doc("i", t, 300000L).get("i"));
+    assertEquals("PT5M", doc("i", t, 5L).get("i"));
     RelDataType day =
         TF.createSqlIntervalType(new SqlIntervalQualifier(TimeUnit.DAY, null, SqlParserPos.ZERO));
-    assertEquals("PT48H", doc("i", day, 172800000L).get("i"));
+    assertEquals("P2D", doc("i", day, 2L).get("i"));
   }
 
   @Test
@@ -226,7 +226,7 @@ class CollectDocsTest {
     RelDataType t =
         TF.createSqlIntervalType(new SqlIntervalQualifier(TimeUnit.MONTH, null, SqlParserPos.ZERO));
     assertEquals("P1M", doc("i", t, 1).get("i"));
-    assertEquals("P1Y2M", doc("i", t, 14L).get("i"));
+    assertEquals("P14M", doc("i", t, 14L).get("i"));
   }
 
   /** Would have caught review bug 11: a ROW value in a single-column scalar row read as the row. */
