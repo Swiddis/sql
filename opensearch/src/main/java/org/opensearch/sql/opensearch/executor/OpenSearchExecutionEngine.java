@@ -43,6 +43,8 @@ import org.apache.logging.log4j.Logger;
 import org.locationtech.jts.geom.Point;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchStatusException;
+import org.opensearch.cluster.block.ClusterBlockException;
+import org.opensearch.core.concurrency.OpenSearchRejectedExecutionException;
 import org.opensearch.sql.ast.statement.ExplainMode;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.utils.CalciteToolsHelper;
@@ -366,13 +368,22 @@ public class OpenSearchExecutionEngine implements ExecutionEngine {
 
   /**
    * Avatica reports a failure inside the query as a SQLException whose message is prefixed with
-   * "exception while executing query:". An {@link OpenSearchStatusException} raised by a write
-   * ({@code collect}) is returned as-is so the error body keeps its own type and message; any other
-   * failure is wrapped as before.
+   * "exception while executing query:". The exceptions a write ({@code collect}) raises carry their
+   * own HTTP status: an {@link OpenSearchStatusException}, a rejection of the whole bulk request
+   * ({@link OpenSearchRejectedExecutionException}) or a cluster block. They are returned as-is so
+   * the error body keeps its own type and message; any other failure is wrapped as before.
    */
   static RuntimeException executionFailure(SQLException e) {
-    Throwable cause = ExceptionsHelper.unwrap(e, OpenSearchStatusException.class);
-    return cause instanceof OpenSearchStatusException status ? status : new RuntimeException(e);
+    Throwable cause =
+        ExceptionsHelper.unwrap(
+            e,
+            OpenSearchStatusException.class,
+            OpenSearchRejectedExecutionException.class,
+            ClusterBlockException.class);
+    if (cause instanceof RuntimeException runtime) {
+      return runtime;
+    }
+    return new RuntimeException(e);
   }
 
   /**

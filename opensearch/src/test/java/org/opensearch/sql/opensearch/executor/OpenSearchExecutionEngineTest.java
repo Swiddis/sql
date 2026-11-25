@@ -290,6 +290,25 @@ class OpenSearchExecutionEngineTest {
     assertSame(cause, OpenSearchExecutionEngine.executionFailure(sql));
   }
 
+  /** Would have caught review bug C: a whole-request 429 still read "java.sql.SQLException". */
+  @Test
+  void execution_failure_surfaces_rejected_execution_and_cluster_blocks() {
+    RuntimeException rejected =
+        new org.opensearch.core.concurrency.OpenSearchRejectedExecutionException("rejected");
+    assertSame(
+        rejected,
+        OpenSearchExecutionEngine.executionFailure(
+            new SQLException("exception while executing query: rejected", rejected)));
+
+    RuntimeException blocked =
+        new org.opensearch.cluster.block.ClusterBlockException(
+            java.util.Set.of(org.opensearch.cluster.metadata.IndexMetadata.INDEX_WRITE_BLOCK));
+    assertSame(
+        blocked,
+        OpenSearchExecutionEngine.executionFailure(
+            new SQLException("exception while executing query", blocked)));
+  }
+
   @Test
   void execution_failure_wraps_other_sql_exceptions() {
     SQLException sql = new SQLException("exception while executing query");
