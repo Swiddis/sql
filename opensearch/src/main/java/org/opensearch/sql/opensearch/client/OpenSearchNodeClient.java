@@ -12,6 +12,7 @@ import com.google.common.collect.ImmutableMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,13 +26,17 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.opensearch.ExceptionsHelper;
+import org.opensearch.OpenSearchException;
 import org.opensearch.OpenSearchSecurityException;
+import org.opensearch.OpenSearchStatusException;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
 import org.opensearch.action.admin.indices.exists.indices.IndicesExistsRequest;
 import org.opensearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetMappingsResponse;
 import org.opensearch.action.admin.indices.settings.get.GetSettingsResponse;
+import org.opensearch.action.bulk.BackoffPolicy;
 import org.opensearch.action.bulk.BulkRequest;
 import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.search.*;
@@ -39,6 +44,8 @@ import org.opensearch.cluster.metadata.AliasMetadata;
 import org.opensearch.common.action.ActionFuture;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.core.concurrency.OpenSearchRejectedExecutionException;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.tasks.TaskId;
 import org.opensearch.index.IndexNotFoundException;
 import org.opensearch.index.IndexSettings;
@@ -423,14 +430,42 @@ public class OpenSearchNodeClient implements OpenSearchClient {
     }
   }
 
+  /** Backoff for whole-request bulk rejections; tests replace it to skip the delays. */
+  BackoffPolicy bulkBackoff = BackoffPolicy.exponentialBackoff();
+
   @Override
   public BulkResponse bulk(BulkRequest bulkRequest) {
+    Iterator<TimeValue> backoff = bulkBackoff.iterator();
+    while (true) {
+      try {
+        return client.bulk(bulkRequest).actionGet();
+      } catch (Exception e) {
+        // A whole-request rejection (indexing pressure, full write queue) happens before any item
+        // runs, so resending the same request cannot duplicate rows. Item-level 429s are retried
+        // by the caller from the per-item results.
+        if (ExceptionsHelper.unwrap(e, OpenSearchRejectedExecutionException.class) != null
+            && backoff.hasNext()) {
+          sleepBeforeBulkRetry(backoff.next());
+          continue;
+        }
+        // OpenSearch exceptions (security, cluster blocks, missing index, rejections) carry the
+        // status the caller should see; wrapping them would turn every one into a 500.
+        if (e instanceof OpenSearchException || e instanceof OpenSearchRejectedExecutionException) {
+          throw (RuntimeException) e;
+        }
+        throw new IllegalStateException("Failed to execute bulk write request", e);
+      }
+    }
+  }
+
+  private static void sleepBeforeBulkRetry(TimeValue delay) {
     try {
-      return client.bulk(bulkRequest).actionGet();
-    } catch (OpenSearchSecurityException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new IllegalStateException("Failed to execute bulk write request", e);
+      Thread.sleep(delay.millis());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new OpenSearchStatusException(
+          "collect interrupted while retrying a rejected bulk write",
+          RestStatus.SERVICE_UNAVAILABLE);
     }
   }
 }

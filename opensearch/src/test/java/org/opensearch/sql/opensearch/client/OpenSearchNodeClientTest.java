@@ -46,6 +46,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.OriginalIndices;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
 import org.opensearch.action.admin.indices.create.CreateIndexResponse;
@@ -54,8 +55,13 @@ import org.opensearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetMappingsResponse;
 import org.opensearch.action.admin.indices.settings.get.GetSettingsResponse;
+import org.opensearch.action.bulk.BackoffPolicy;
+import org.opensearch.action.bulk.BulkItemResponse;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.search.*;
 import org.opensearch.action.search.SearchRequest;
+import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.metadata.AliasMetadata;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
@@ -64,6 +70,8 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.xcontent.XContentType;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.concurrency.OpenSearchRejectedExecutionException;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentParser;
@@ -923,5 +931,61 @@ class OpenSearchNodeClientTest {
         .xContent()
         .createParser(
             NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, mappings);
+  }
+
+  private OpenSearchNodeClient bulkClientWithoutBackoffDelay() {
+    OpenSearchNodeClient nodeClientUnderTest = new OpenSearchNodeClient(nodeClient, remoteClusters);
+    nodeClientUnderTest.bulkBackoff = BackoffPolicy.constantBackoff(TimeValue.ZERO, 2);
+    return nodeClientUnderTest;
+  }
+
+  @Test
+  void bulk_retries_whole_request_rejection_then_succeeds() {
+    BulkResponse ok = new BulkResponse(new BulkItemResponse[0], 1);
+    when(nodeClient.bulk(any(BulkRequest.class)).actionGet())
+        .thenThrow(new OpenSearchRejectedExecutionException("rejected"))
+        .thenReturn(ok);
+
+    assertEquals(ok, bulkClientWithoutBackoffDelay().bulk(new BulkRequest()));
+  }
+
+  @Test
+  void bulk_surfaces_whole_request_rejection_as_429_when_retries_run_out() {
+    when(nodeClient.bulk(any(BulkRequest.class)).actionGet())
+        .thenThrow(new OpenSearchRejectedExecutionException("rejected"));
+
+    OpenSearchRejectedExecutionException e =
+        assertThrows(
+            OpenSearchRejectedExecutionException.class,
+            () -> bulkClientWithoutBackoffDelay().bulk(new BulkRequest()));
+    assertEquals(RestStatus.TOO_MANY_REQUESTS, ExceptionsHelper.status(e));
+  }
+
+  @Test
+  void bulk_surfaces_cluster_block_with_its_own_status() {
+    when(nodeClient.bulk(any(BulkRequest.class)).actionGet())
+        .thenThrow(new ClusterBlockException(Set.of(IndexMetadata.INDEX_WRITE_BLOCK)));
+
+    ClusterBlockException e =
+        assertThrows(ClusterBlockException.class, () -> client.bulk(new BulkRequest()));
+    assertEquals(RestStatus.FORBIDDEN, e.status());
+  }
+
+  @Test
+  void bulk_surfaces_missing_index_as_404() {
+    when(nodeClient.bulk(any(BulkRequest.class)).actionGet())
+        .thenThrow(new IndexNotFoundException("dest"));
+
+    IndexNotFoundException e =
+        assertThrows(IndexNotFoundException.class, () -> client.bulk(new BulkRequest()));
+    assertEquals(RestStatus.NOT_FOUND, e.status());
+  }
+
+  @Test
+  void bulk_wraps_non_opensearch_failure() {
+    when(nodeClient.bulk(any(BulkRequest.class)).actionGet())
+        .thenThrow(new IllegalArgumentException("boom"));
+
+    assertThrows(IllegalStateException.class, () -> client.bulk(new BulkRequest()));
   }
 }
