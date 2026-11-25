@@ -5,7 +5,10 @@
 
 package org.opensearch.sql.calcite.plan.rel;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import lombok.Getter;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
@@ -14,8 +17,11 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
+import org.apache.calcite.rel.metadata.RelColumnOrigin;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 /**
@@ -39,17 +45,26 @@ public class LogicalCollectSink extends SingleRel {
    */
   private final List<String> fieldNames;
 
+  /**
+   * Types of the members of struct columns, by dotted output path ({@code h.ts}). A struct column's
+   * own type has no member types, and a projection such as {@code fields h} drops the dotted
+   * columns that carry them, so they are read from the source table when the sink is built.
+   */
+  private final Map<String, RelDataType> memberTypes;
+
   public LogicalCollectSink(
       RelOptCluster cluster,
       RelTraitSet traits,
       RelNode input,
       RelOptTable table,
       List<String> idFields,
-      List<String> fieldNames) {
+      List<String> fieldNames,
+      Map<String, RelDataType> memberTypes) {
     super(cluster, traits, input);
     this.table = table;
     this.idFields = List.copyOf(idFields);
     this.fieldNames = List.copyOf(fieldNames);
+    this.memberTypes = Map.copyOf(memberTypes);
   }
 
   public static LogicalCollectSink create(RelNode input, RelOptTable table, List<String> idFields) {
@@ -60,7 +75,36 @@ public class LogicalCollectSink extends SingleRel {
         input,
         table,
         idFields,
-        input.getRowType().getFieldNames());
+        input.getRowType().getFieldNames(),
+        structMemberTypes(input));
+  }
+
+  /**
+   * For each column that comes unchanged from one source column, the source table's dotted columns
+   * under that column, renamed under the output column's name.
+   */
+  static Map<String, RelDataType> structMemberTypes(RelNode input) {
+    Map<String, RelDataType> out = new LinkedHashMap<>();
+    RelMetadataQuery mq = input.getCluster().getMetadataQuery();
+    List<String> names = input.getRowType().getFieldNames();
+    for (int i = 0; i < names.size(); i++) {
+      Set<RelColumnOrigin> origins = mq.getColumnOrigins(input, i);
+      if (origins == null || origins.size() != 1) {
+        continue;
+      }
+      RelColumnOrigin origin = origins.iterator().next();
+      if (origin.isDerived()) {
+        continue;
+      }
+      List<RelDataTypeField> source = origin.getOriginTable().getRowType().getFieldList();
+      String prefix = source.get(origin.getOriginColumnOrdinal()).getName() + ".";
+      for (RelDataTypeField f : source) {
+        if (f.getName().startsWith(prefix)) {
+          out.put(names.get(i) + "." + f.getName().substring(prefix.length()), f.getType());
+        }
+      }
+    }
+    return out;
   }
 
   /** The (rows_written, rows_failed) result row type, shared with the physical node. */
@@ -77,7 +121,7 @@ public class LogicalCollectSink extends SingleRel {
   @Override
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
     return new LogicalCollectSink(
-        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames);
+        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames, memberTypes);
   }
 
   @Override

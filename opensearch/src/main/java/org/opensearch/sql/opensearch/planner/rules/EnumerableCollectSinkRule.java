@@ -55,6 +55,7 @@ public class EnumerableCollectSinkRule extends ConverterRule {
         convertedInput,
         collect.getTable(),
         collect.getIdFields(),
-        collect.getFieldNames());
+        collect.getFieldNames(),
+        collect.getMemberTypes());
   }
 }

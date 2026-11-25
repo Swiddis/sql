@@ -49,6 +49,7 @@ final class CollectBulkWriter {
   /** SCALAR row format (row is the value), non-scalar (row is Object[]), or null to guess. */
   private final Boolean scalarRow;
 
+  private Map<String, RelDataType> memberTypes = Map.of();
   private LongConsumer sleeper = CollectBulkWriter::sleep;
   private BulkRequest bulk = new BulkRequest();
   private long written = 0;
@@ -92,6 +93,12 @@ final class CollectBulkWriter {
     }
   }
 
+  /** Types of struct members by dotted path, for columns whose struct value carries no types. */
+  CollectBulkWriter withMemberTypes(Map<String, RelDataType> memberTypes) {
+    this.memberTypes = memberTypes;
+    return this;
+  }
+
   CollectBulkWriter withSleeper(LongConsumer sleeper) {
     this.sleeper = sleeper;
     return this;
@@ -103,7 +110,7 @@ final class CollectBulkWriter {
         scalarRow != null
             ? CollectDocs.rowValues(row, scalarRow)
             : (row instanceof Object[] arr) ? arr : new Object[] {row};
-    Map<String, Object> doc = CollectDocs.toDocument(names, types, values);
+    Map<String, Object> doc = CollectDocs.toDocument(names, types, values, memberTypes);
     if (doc == null) {
       return;
     }

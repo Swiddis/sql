@@ -71,6 +71,27 @@ public class CalcitePPLCollectTypesIT extends PPLIntegTestCase {
         src.getJSONObject("o").getString("t").startsWith("2026-11-23T10:00:00"));
   }
 
+  /**
+   * Review bug A: projecting the object alone ({@code fields h}) left no dotted column carrying the
+   * timestamp's type, so it was written as {@code yyyy-MM-dd HH:mm:ss} and a date destination
+   * answered 400.
+   */
+  @Test
+  public void testProjectedStructTimestampIsIso() throws IOException {
+    String mapping =
+        "{\"mappings\":{\"properties\":{\"h\":{\"properties\":{\"auth\":{\"type\":\"keyword\"},"
+            + "\"ts\":{\"type\":\"date\"}}},\"k\":{\"type\":\"keyword\"}}}}";
+    put("/collect_t_proj_src", mapping);
+    put("/collect_t_proj_dst", mapping);
+    put(
+        "/collect_t_proj_src/_doc/1?refresh=true",
+        "{\"h\":{\"auth\":\"x\",\"ts\":\"2023-11-14T22:13:20Z\"},\"k\":\"k1\"}");
+    executeQuery("source=collect_t_proj_src | fields h | collect index=collect_t_proj_dst");
+    JSONObject h = source("collect_t_proj_dst").getJSONObject("h");
+    assertEquals("x", h.getString("auth"));
+    assertEquals("2023-11-14T22:13:20Z", h.getString("ts"));
+  }
+
   /** Review bug 2: copying an index with a nested field works. */
   @Test
   public void testNestedFieldCanBeCopied() throws IOException {

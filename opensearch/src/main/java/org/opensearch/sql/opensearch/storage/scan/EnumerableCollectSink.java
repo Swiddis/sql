@@ -7,6 +7,7 @@ package org.opensearch.sql.opensearch.storage.scan;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
 import lombok.Getter;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
 import org.apache.calcite.adapter.enumerable.EnumerableRelImplementor;
@@ -56,6 +57,11 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
   /** The column names as the query wrote them; see {@link LogicalCollectSink#getFieldNames}. */
   private final List<String> fieldNames;
 
+  /**
+   * Member types of struct columns by dotted path; see {@link LogicalCollectSink#getMemberTypes}.
+   */
+  private final Map<String, RelDataType> memberTypes;
+
   /** Whether the input's rows are bare column values (single column), set by {@link #implement}. */
   private Boolean scalarRow;
 
@@ -65,13 +71,15 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
       RelNode input,
       RelOptTable table,
       List<String> idFields,
-      List<String> fieldNames) {
+      List<String> fieldNames,
+      Map<String, RelDataType> memberTypes) {
     super(cluster, traitSet, input);
     this.table = table;
     this.osIndex = table.unwrap(OpenSearchIndex.class);
     this.indexName = table.getQualifiedName().get(table.getQualifiedName().size() - 1);
     this.idFields = List.copyOf(idFields);
     this.fieldNames = List.copyOf(fieldNames);
+    this.memberTypes = Map.copyOf(memberTypes);
     if (fieldNames.size() != input.getRowType().getFieldCount()) {
       throw new IllegalStateException(
           "collect: planned input has "
@@ -89,7 +97,7 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
   @Override
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
     return new EnumerableCollectSink(
-        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames);
+        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames, memberTypes);
   }
 
   @Override
@@ -120,13 +128,14 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
     List<RelDataTypeField> fields = getInput().getRowType().getFieldList();
     CollectBulkWriter writer =
         new CollectBulkWriter(
-            osIndex.getClient(),
-            indexName,
-            fieldNames,
-            fields.stream().map(RelDataTypeField::getType).toList(),
-            idFields,
-            BATCH_SIZE,
-            scalarRow);
+                osIndex.getClient(),
+                indexName,
+                fieldNames,
+                fields.stream().map(RelDataTypeField::getType).toList(),
+                idFields,
+                BATCH_SIZE,
+                scalarRow)
+            .withMemberTypes(memberTypes);
     try (var rows = input.enumerator()) {
       while (rows.moveNext()) {
         writer.add(rows.current());

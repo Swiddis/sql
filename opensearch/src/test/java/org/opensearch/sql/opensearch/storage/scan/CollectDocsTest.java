@@ -195,6 +195,34 @@ class CollectDocsTest {
         d.get("evt"));
   }
 
+  /**
+   * Would have caught review bug A: {@code fields h | collect} has one STRUCT column and no dotted
+   * column, so the member types must come from elsewhere; the timestamp was written as {@code
+   * yyyy-MM-dd HH:mm:ss}.
+   */
+  @Test
+  void singleStructColumnTimestampUsesMemberTypes() {
+    RelDataType ts = TF.createUDT(ExprUDT.EXPR_TIMESTAMP);
+    Map<String, Object> d =
+        CollectDocs.toDocument(
+            List.of("h"),
+            List.of(ANY),
+            new Object[] {
+              Map.of(
+                  "auth",
+                  "x",
+                  "in",
+                  Map.of("ts", "2026-11-23 10:00:01"),
+                  "ts",
+                  "2026-11-23 10:00:00")
+            },
+            Map.of("h.ts", ts, "h.in.ts", ts));
+    assertEquals(
+        Map.of(
+            "auth", "x", "in", Map.of("ts", "2026-11-23T10:00:01Z"), "ts", "2026-11-23T10:00:00Z"),
+        d.get("h"));
+  }
+
   /** Same for an array of objects (nested type): the element path stays the field path. */
   @Test
   void timestampInArrayOfStructsIsWrittenAsIso8601Utc() {

@@ -52,7 +52,19 @@ final class CollectDocs {
    */
   static Map<String, Object> toDocument(
       List<String> names, List<RelDataType> types, Object[] values) {
-    Map<String, RelDataType> typeByPath = new HashMap<>();
+    return toDocument(names, types, values, Map.of());
+  }
+
+  /**
+   * @param memberTypes types of struct members by dotted path, used when the input has no dotted
+   *     column for a member (the struct was projected alone); a dotted input column wins
+   */
+  static Map<String, Object> toDocument(
+      List<String> names,
+      List<RelDataType> types,
+      Object[] values,
+      Map<String, RelDataType> memberTypes) {
+    Map<String, RelDataType> typeByPath = new HashMap<>(memberTypes);
     for (int i = 0; i < names.size(); i++) {
       typeByPath.put(names.get(i), types.get(i));
     }
