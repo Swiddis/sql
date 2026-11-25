@@ -32,21 +32,35 @@ public class LogicalCollectSink extends SingleRel {
   private final RelOptTable table;
   private final List<String> idFields;
 
+  /**
+   * The input's column names as the query wrote them, captured when the sink is built. The planner
+   * may swap the input for an equivalent node with other names (a rename-only Project merged into a
+   * scan keeps the source names), so the writer must use these, not the planned input's.
+   */
+  private final List<String> fieldNames;
+
   public LogicalCollectSink(
       RelOptCluster cluster,
       RelTraitSet traits,
       RelNode input,
       RelOptTable table,
-      List<String> idFields) {
+      List<String> idFields,
+      List<String> fieldNames) {
     super(cluster, traits, input);
     this.table = table;
     this.idFields = List.copyOf(idFields);
+    this.fieldNames = List.copyOf(fieldNames);
   }
 
   public static LogicalCollectSink create(RelNode input, RelOptTable table, List<String> idFields) {
     RelOptCluster cluster = input.getCluster();
     return new LogicalCollectSink(
-        cluster, cluster.traitSetOf(Convention.NONE), input, table, idFields);
+        cluster,
+        cluster.traitSetOf(Convention.NONE),
+        input,
+        table,
+        idFields,
+        input.getRowType().getFieldNames());
   }
 
   /** The (rows_written, rows_failed) result row type, shared with the physical node. */
@@ -62,7 +76,8 @@ public class LogicalCollectSink extends SingleRel {
 
   @Override
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
-    return new LogicalCollectSink(getCluster(), traitSet, sole(inputs), table, idFields);
+    return new LogicalCollectSink(
+        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames);
   }
 
   @Override

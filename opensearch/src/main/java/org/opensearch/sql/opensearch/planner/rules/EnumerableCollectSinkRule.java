@@ -50,6 +50,11 @@ public class EnumerableCollectSinkRule extends ConverterRule {
             collect.getInput(),
             collect.getInput().getTraitSet().replace(EnumerableConvention.INSTANCE));
     return new EnumerableCollectSink(
-        collect.getCluster(), traitSet, convertedInput, collect.getTable(), collect.getIdFields());
+        collect.getCluster(),
+        traitSet,
+        convertedInput,
+        collect.getTable(),
+        collect.getIdFields(),
+        collect.getFieldNames());
   }
 }

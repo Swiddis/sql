@@ -52,17 +52,29 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
   private final String indexName;
   private final List<String> idFields;
 
+  /** The column names as the query wrote them; see {@link LogicalCollectSink#getFieldNames}. */
+  private final List<String> fieldNames;
+
   public EnumerableCollectSink(
       RelOptCluster cluster,
       RelTraitSet traitSet,
       RelNode input,
       RelOptTable table,
-      List<String> idFields) {
+      List<String> idFields,
+      List<String> fieldNames) {
     super(cluster, traitSet, input);
     this.table = table;
     this.osIndex = table.unwrap(OpenSearchIndex.class);
     this.indexName = table.getQualifiedName().get(table.getQualifiedName().size() - 1);
     this.idFields = List.copyOf(idFields);
+    this.fieldNames = List.copyOf(fieldNames);
+    if (fieldNames.size() != input.getRowType().getFieldCount()) {
+      throw new IllegalStateException(
+          "collect: planned input has "
+              + input.getRowType().getFieldCount()
+              + " columns, expected "
+              + fieldNames);
+    }
   }
 
   @Override
@@ -72,7 +84,8 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
 
   @Override
   public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
-    return new EnumerableCollectSink(getCluster(), traitSet, sole(inputs), table, idFields);
+    return new EnumerableCollectSink(
+        getCluster(), traitSet, sole(inputs), table, idFields, fieldNames);
   }
 
   @Override
@@ -98,12 +111,13 @@ public class EnumerableCollectSink extends SingleRel implements EnumerableRel {
 
   /** Writes every input row, then returns the single result row. Called from generated code. */
   public Enumerable<@Nullable Object> writeAll(Enumerable<@Nullable Object> input) {
+    // Names from the query, types by position from the planned input (the planner keeps types).
     List<RelDataTypeField> fields = getInput().getRowType().getFieldList();
     CollectBulkWriter writer =
         new CollectBulkWriter(
             osIndex.getClient(),
             indexName,
-            fields.stream().map(RelDataTypeField::getName).toList(),
+            fieldNames,
             fields.stream().map(RelDataTypeField::getType).toList(),
             idFields,
             BATCH_SIZE);
