@@ -120,19 +120,34 @@ public class CalcitePPLCollectIT extends PPLIntegTestCase {
     verifyErrorMessageContains(e, "MapperParsingException");
   }
 
-  /** Would have caught T6: a write-blocked dest returned HTTP 200 with 0 written. */
+  /**
+   * Would have caught T6 (200 with 0 written) and review bug D (testmode passed for a write-blocked
+   * destination): both the write and the dry run are refused at analysis, with 403 and no write.
+   */
   @Test
   public void testCollectFailsOnWriteBlockedDestination() throws IOException {
     seed("collect_src_block");
-    createIndex(
-        "collect_dest_block",
-        "{\"settings\":{\"index.blocks.write\":true}," + MAPPING.substring(1));
-    try {
-      assertQueryFails("source=collect_src_block | fields id | collect index=collect_dest_block");
-    } finally {
-      Request unblock = new Request("PUT", "/collect_dest_block/_settings");
-      unblock.setJsonEntity("{\"index.blocks.write\":false}");
-      client().performRequest(unblock);
+    for (String block :
+        new String[] {
+          "index.blocks.write", "index.blocks.read_only", "index.blocks.read_only_allow_delete"
+        }) {
+      String dest = "collect_dest_block_" + block.substring(block.lastIndexOf('.') + 1);
+      createIndex(dest, "{\"settings\":{\"" + block + "\":true}," + MAPPING.substring(1));
+      try {
+        for (String suffix : new String[] {"", " testmode=true"}) {
+          Exception e =
+              assertQueryFails(
+                  "source=collect_src_block | fields id | collect index=" + dest + suffix);
+          verifyErrorMessageContains(e, "[" + dest + "]");
+          verifyErrorMessageContains(e, block);
+          assertEquals(403, status(e));
+        }
+      } finally {
+        Request unblock = new Request("PUT", "/" + dest + "/_settings");
+        unblock.setJsonEntity("{\"" + block + "\":false}");
+        client().performRequest(unblock);
+      }
+      assertEquals(0L, count(dest));
     }
   }
 
@@ -335,6 +350,18 @@ public class CalcitePPLCollectIT extends PPLIntegTestCase {
             "source=collect_src_tm_valid | fields name | collect index=collect_dest_tm_valid"
                 + " id=status testmode=true"),
         "is not a column of the input");
+    // Review E: the list names the columns the user can pick, not the internal metadata columns.
+    Exception e =
+        assertQueryFails(
+            "source=collect_src_tm_valid | collect index=collect_dest_tm_valid id=nope"
+                + " testmode=true");
+    verifyErrorMessageContains(e, "is not a column of the input");
+    String body = e.getMessage();
+    for (String internal :
+        new String[] {"_id", "_index", "_score", "_maxscore", "_sort", "_routing"}) {
+      assertFalse(body, body.contains(internal + ","));
+      assertFalse(body, body.contains(internal + "]"));
+    }
   }
 
   /** Bug 8: the preview drops all-null rows, which the write skips. */
@@ -397,6 +424,14 @@ public class CalcitePPLCollectIT extends PPLIntegTestCase {
         Exception e = assertQueryFails(q);
         verifyErrorMessageContains(e, "plugins.ppl.write_commands.enable");
         assertEquals(400, status(e));
+        // The text is in `reason`, not only `details`, so a client that shows only reason shows it.
+        String reason =
+            new JSONObject(
+                    org.opensearch.sql.util.TestUtils.getResponseBody(
+                        ((ResponseException) e).getResponse(), false))
+                .getJSONObject("error")
+                .getString("reason");
+        assertTrue(reason, reason.contains("plugins.ppl.write_commands.enable"));
       }
       assertEquals(0L, count("collect_dest_disabled"));
     } finally {
@@ -404,5 +439,37 @@ public class CalcitePPLCollectIT extends PPLIntegTestCase {
           new ClusterSetting("transient", "plugins.ppl.write_commands.enable", "true"));
     }
     assertEquals(3L, rowsWritten(executeQuery(ppl)));
+  }
+
+  /**
+   * Review bug B: a null id after earlier batches (1000 rows each) fails the query, and the error
+   * says how many rows were written before it.
+   */
+  @Test
+  public void testCollectNullIdInALaterBatchReportsRowsWritten() throws IOException {
+    createIndex(
+        "collect_src_nullid",
+        "{\"mappings\":{\"properties\":{\"g\":{\"type\":\"keyword\"},"
+            + "\"n\":{\"type\":\"integer\"}}}}");
+    createIndex(
+        "collect_dest_nullid",
+        "{\"mappings\":{\"properties\":{\"g\":{\"type\":\"keyword\"},"
+            + "\"n\":{\"type\":\"integer\"}}}}");
+    StringBuilder bulk = new StringBuilder();
+    for (int i = 0; i < 2500; i++) {
+      bulk.append("{\"index\":{}}\n");
+      bulk.append(i < 2200 ? "{\"g\":\"g" + i + "\",\"n\":" + i + "}\n" : "{\"n\":" + i + "}\n");
+    }
+    Request req = new Request("POST", "/collect_src_nullid/_bulk?refresh=true");
+    req.setJsonEntity(bulk.toString());
+    client().performRequest(req);
+    Exception e =
+        assertQueryFails(
+            "source=collect_src_nullid | fields g, n | sort n | collect index=collect_dest_nullid"
+                + " id=g");
+    verifyErrorMessageContains(e, "all null");
+    verifyErrorMessageContains(e, "rows_written=2000");
+    assertEquals(400, status(e));
+    assertEquals(2000L, count("collect_dest_nullid"));
   }
 }
