@@ -83,6 +83,14 @@ public class OpenSearchSettings extends Settings {
           Function.identity(),
           Setting.Property.NodeScope);
 
+  /** Off rejects write commands such as {@code collect} at analysis; on defers to index perms. */
+  public static final Setting<?> PPL_WRITE_COMMANDS_ENABLED_SETTING =
+      Setting.boolSetting(
+          Key.PPL_WRITE_COMMANDS_ENABLED.getKeyValue(),
+          true,
+          Setting.Property.NodeScope,
+          Setting.Property.Dynamic);
+
   public static final Setting<TimeValue> PPL_QUERY_TIMEOUT_SETTING =
       Setting.positiveTimeSetting(
           Key.PPL_QUERY_TIMEOUT.getKeyValue(),
@@ -471,6 +479,12 @@ public class OpenSearchSettings extends Settings {
     register(
         settingBuilder,
         clusterSettings,
+        Key.PPL_WRITE_COMMANDS_ENABLED,
+        PPL_WRITE_COMMANDS_ENABLED_SETTING,
+        new Updater(Key.PPL_WRITE_COMMANDS_ENABLED));
+    register(
+        settingBuilder,
+        clusterSettings,
         Key.PPL_QUERY_TIMEOUT,
         PPL_QUERY_TIMEOUT_SETTING,
         new Updater(Key.PPL_QUERY_TIMEOUT));
@@ -841,6 +855,7 @@ public class OpenSearchSettings extends Settings {
         .add(PPL_REGEX_MATCH_LIMIT_SETTING)
         .add(PPL_VALUES_MAX_LIMIT_SETTING)
         .add(PPL_SUBSEARCH_MAXOUT_SETTING)
+        .add(PPL_WRITE_COMMANDS_ENABLED_SETTING)
         .add(PPL_JOIN_SUBSEARCH_MAXOUT_SETTING)
         .add(QUERY_MEMORY_LIMIT_SETTING)
         .add(QUERY_SIZE_LIMIT_SETTING)
