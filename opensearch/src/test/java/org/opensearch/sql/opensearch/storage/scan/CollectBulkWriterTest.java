@@ -176,4 +176,54 @@ class CollectBulkWriterTest {
     w.finish();
     assertNull(((IndexRequest) seen.get(0).requests().get(0)).id());
   }
+
+  /** Would have caught review bug 6: rows whose id fields are all null collapsed into one _id. */
+  @Test
+  void rowWithAllNullIdFieldsFailsLoudly() {
+    CollectBulkWriter w = writer(client(i -> null), List.of("host"), 100);
+    OpenSearchStatusException e =
+        assertThrows(OpenSearchStatusException.class, () -> w.add(new Object[] {null, 1L}));
+    assertEquals(RestStatus.BAD_REQUEST, e.status());
+    assertTrue(e.getMessage().contains("host"), e.getMessage());
+  }
+
+  /** A null in only some id fields is a legitimate key part and still hashes distinctly. */
+  @Test
+  void partiallyNullIdIsAccepted() {
+    CollectBulkWriter w = writer(client(i -> null), List.of("host", "n"), 100);
+    w.add(new Object[] {"a", null});
+    assertEquals(1, w.finish().rowsWritten());
+  }
+
+  /** Would have caught review bug 10: unbounded (about 13 s per batch) sleeping on the worker. */
+  @Test
+  void retryBackoffTotalIsBounded() {
+    List<Long> slept = new ArrayList<>();
+    CollectBulkWriter w =
+        writer(client(i -> failure(RestStatus.TOO_MANY_REQUESTS, "busy")), List.of(), 100)
+            .withSleeper(slept::add);
+    w.add(new Object[] {"a", 1L});
+    OpenSearchStatusException e = assertThrows(OpenSearchStatusException.class, w::finish);
+    assertEquals(RestStatus.TOO_MANY_REQUESTS, e.status());
+    assertTrue(slept.size() > 0);
+    assertTrue(
+        slept.stream().mapToLong(Long::longValue).sum() <= CollectBulkWriter.MAX_BACKOFF_MILLIS,
+        slept.toString());
+  }
+
+  /** Would have caught review bug 11: with SCALAR row format the row is the single value. */
+  @Test
+  void scalarRowFormatTreatsObjectArrayAsTheColumnValue() {
+    RelDataType row =
+        OpenSearchTypeFactory.TYPE_FACTORY.builder().add("a", VARCHAR).add("b", BIGINT).build();
+    List<IndexRequest> sent = new ArrayList<>();
+    OpenSearchClient c = client(i -> null);
+    CollectBulkWriter w =
+        new CollectBulkWriter(c, "dest", List.of("r"), List.of(row), List.of(), 100, true);
+    w.add(new Object[] {"x", 2L});
+    w.finish();
+    assertEquals(
+        java.util.Map.of("r", java.util.Map.of("a", "x", "b", 2)),
+        ((IndexRequest) seen.get(0).requests().get(0)).sourceAsMap());
+  }
 }

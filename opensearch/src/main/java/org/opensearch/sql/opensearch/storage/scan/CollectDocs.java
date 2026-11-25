@@ -9,10 +9,13 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.Period;
 import java.time.temporal.TemporalAmount;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,18 +34,38 @@ final class CollectDocs {
   private CollectDocs() {}
 
   /**
+   * The column values of one input row. With Calcite's {@code JavaRowFormat.SCALAR} (a single
+   * column) the row object is the column value itself, even when that value is an {@code Object[]}
+   * (a ROW); in every other format the row is the {@code Object[]} of column values.
+   */
+  static Object[] rowValues(Object row, boolean scalarRow) {
+    return scalarRow ? new Object[] {row} : (Object[]) row;
+  }
+
+  /**
    * Converts one row to a JSON-writable document, or returns null when every non-metadata column is
    * null (such a row is not written).
+   *
+   * <p>The index row type lists each object field twice: the struct column {@code a} and one column
+   * per leaf ({@code a.b}). Only the struct column is written, because writing both makes the field
+   * hold the value twice, and a dotted key cannot be written into a {@code nested} mapping. A
+   * dotted column whose parent column is absent (an explicit field list) is written as given.
    */
   static Map<String, Object> toDocument(
       List<String> names, List<RelDataType> types, Object[] values) {
+    Map<String, RelDataType> typeByPath = new HashMap<>();
+    for (int i = 0; i < names.size(); i++) {
+      typeByPath.put(names.get(i), types.get(i));
+    }
     Map<String, Object> doc = new LinkedHashMap<>();
     for (int i = 0; i < names.size() && i < values.length; i++) {
       String name = names.get(i);
-      if (values[i] == null || OpenSearchIndex.METADATAFIELD_TYPE_MAP.containsKey(name)) {
+      if (values[i] == null
+          || OpenSearchIndex.METADATAFIELD_TYPE_MAP.containsKey(name)
+          || hasParentColumn(name, typeByPath)) {
         continue;
       }
-      Object v = toJson(values[i], types.get(i));
+      Object v = toJson(values[i], types.get(i), name, typeByPath);
       if (v != null) {
         doc.put(name, v);
       }
@@ -50,9 +73,28 @@ final class CollectDocs {
     return doc.isEmpty() ? null : doc;
   }
 
+  private static boolean hasParentColumn(String name, Map<String, RelDataType> columns) {
+    for (int dot = name.indexOf('.'); dot > 0; dot = name.indexOf('.', dot + 1)) {
+      if (columns.containsKey(name.substring(0, dot))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Converts a runtime value to something XContent can write. */
-  @SuppressWarnings("unchecked")
   static Object toJson(Object value, RelDataType type) {
+    return toJson(value, type, null, Map.of());
+  }
+
+  /**
+   * @param path the dotted field path of {@code value}, or null when unknown
+   * @param typeByPath column types by dotted path; the types of leaves inside a struct value come
+   *     from here, since the struct's own type carries no field types
+   */
+  @SuppressWarnings("unchecked")
+  private static Object toJson(
+      Object value, RelDataType type, String path, Map<String, RelDataType> typeByPath) {
     if (value == null) {
       return null;
     }
@@ -60,7 +102,7 @@ final class CollectDocs {
       if (ev.isNull() || ev.isMissing()) {
         return null;
       }
-      return toJson(ev.value(), type);
+      return toJson(ev.value(), type, path, typeByPath);
     }
     if (value instanceof Point p) {
       Map<String, Object> m = new LinkedHashMap<>();
@@ -74,13 +116,27 @@ final class CollectDocs {
     if (value instanceof TemporalAmount t) {
       return t.toString();
     }
+    if (value instanceof Number n && isInterval(type)) {
+      // Calcite holds INTERVAL values as millis (day-time) or months (year-month); the unit is only
+      // in the type.
+      return SqlTypeName.YEAR_INTERVAL_TYPES.contains(type.getSqlTypeName())
+          ? Period.ofMonths(n.intValue()).normalized().toString()
+          : Duration.ofMillis(n.longValue()).toString();
+    }
     if (value instanceof String s && isTimestamp(type)) {
       return toIsoUtc(s);
     }
     if (value instanceof Map<?, ?> map) {
       Map<String, Object> out = new LinkedHashMap<>();
       for (Map.Entry<String, Object> e : ((Map<String, Object>) map).entrySet()) {
-        out.put(e.getKey(), toJson(e.getValue(), null));
+        String childPath = path == null ? null : path + "." + e.getKey();
+        out.put(
+            e.getKey(),
+            toJson(
+                e.getValue(),
+                childPath == null ? null : typeByPath.get(childPath),
+                childPath,
+                typeByPath));
       }
       return out;
     }
@@ -89,7 +145,8 @@ final class CollectDocs {
         List<RelDataTypeField> fields = type.getFieldList();
         Map<String, Object> out = new LinkedHashMap<>();
         for (int i = 0; i < fields.size() && i < arr.length; i++) {
-          out.put(fields.get(i).getName(), toJson(arr[i], fields.get(i).getType()));
+          out.put(
+              fields.get(i).getName(), toJson(arr[i], fields.get(i).getType(), null, typeByPath));
         }
         return out;
       }
@@ -99,11 +156,16 @@ final class CollectDocs {
       RelDataType component = type != null ? type.getComponentType() : null;
       List<Object> out = new ArrayList<>(list.size());
       for (Object o : list) {
-        out.add(toJson(o, component));
+        // Elements of an array of objects keep the array's path: n.ts is the leaf of every n[i].
+        out.add(toJson(o, component, path, typeByPath));
       }
       return out;
     }
     return value;
+  }
+
+  private static boolean isInterval(RelDataType type) {
+    return type != null && SqlTypeName.INTERVAL_TYPES.contains(type.getSqlTypeName());
   }
 
   private static boolean isTimestamp(RelDataType type) {

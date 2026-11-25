@@ -8,12 +8,16 @@ package org.opensearch.sql.opensearch.storage.scan;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.SqlIntervalQualifier;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Coordinate;
@@ -149,5 +153,90 @@ class CollectDocsTest {
         CollectDocs.documentId(Arrays.asList((Object) null)),
         CollectDocs.documentId(List.of("null")));
     assertEquals(CollectDocs.documentId(List.of(1)), CollectDocs.documentId(List.of(1L)));
+  }
+
+  /**
+   * Would have caught review bug 2: a struct column and its flattened dotted columns both written.
+   */
+  @Test
+  void structColumnIsNotAlsoWrittenAsDottedKeys() {
+    Map<String, Object> d =
+        CollectDocs.toDocument(
+            List.of("o", "o.b", "o.c.d", "x"),
+            List.of(ANY, VARCHAR, VARCHAR, VARCHAR),
+            new Object[] {Map.of("b", "v", "c", Map.of("d", "w")), "v", "w", "y"});
+    assertEquals(List.of("o", "x"), List.copyOf(d.keySet()));
+    assertEquals(Map.of("b", "v", "c", Map.of("d", "w")), d.get("o"));
+  }
+
+  /** A dotted column without its parent column (explicit field list) is still written. */
+  @Test
+  void dottedColumnWithoutParentIsWritten() {
+    Map<String, Object> d =
+        CollectDocs.toDocument(List.of("o.b"), List.of(VARCHAR), new Object[] {"v"});
+    assertEquals(Map.of("o.b", "v"), d);
+  }
+
+  /** Would have caught review bug 3: a timestamp nested in a struct was not converted to ISO. */
+  @Test
+  void timestampNestedInStructIsWrittenAsIso8601Utc() {
+    RelDataType ts = TF.createUDT(ExprUDT.EXPR_TIMESTAMP);
+    Map<String, Object> d =
+        CollectDocs.toDocument(
+            List.of("evt", "evt.ts", "evt.in.ts"),
+            List.of(ANY, ts, ts),
+            new Object[] {
+              Map.of("ts", "2026-11-23 10:00:00", "in", Map.of("ts", "2026-11-23 10:00:01")),
+              "2026-11-23 10:00:00",
+              "2026-11-23 10:00:01"
+            });
+    assertEquals(
+        Map.of("ts", "2026-11-23T10:00:00Z", "in", Map.of("ts", "2026-11-23T10:00:01Z")),
+        d.get("evt"));
+  }
+
+  /** Same for an array of objects (nested type): the element path stays the field path. */
+  @Test
+  void timestampInArrayOfStructsIsWrittenAsIso8601Utc() {
+    RelDataType ts = TF.createUDT(ExprUDT.EXPR_TIMESTAMP);
+    Map<String, Object> d =
+        CollectDocs.toDocument(
+            List.of("n", "n.ts"),
+            List.of(ANY, ts),
+            new Object[] {
+              List.of(Map.of("ts", "2026-11-23 10:00:00")), List.of("2026-11-23 10:00:00")
+            });
+    assertEquals(List.of(Map.of("ts", "2026-11-23T10:00:00Z")), d.get("n"));
+  }
+
+  /** Would have caught review bug 5: intervals were written as bare numbers (unit lost). */
+  @Test
+  void dayTimeIntervalIsWrittenAsIso8601Duration() {
+    RelDataType t =
+        TF.createSqlIntervalType(
+            new SqlIntervalQualifier(TimeUnit.MINUTE, null, SqlParserPos.ZERO));
+    assertEquals("PT5M", doc("i", t, 300000L).get("i"));
+    RelDataType day =
+        TF.createSqlIntervalType(new SqlIntervalQualifier(TimeUnit.DAY, null, SqlParserPos.ZERO));
+    assertEquals("PT48H", doc("i", day, 172800000L).get("i"));
+  }
+
+  @Test
+  void yearMonthIntervalIsWrittenAsIso8601Period() {
+    RelDataType t =
+        TF.createSqlIntervalType(new SqlIntervalQualifier(TimeUnit.MONTH, null, SqlParserPos.ZERO));
+    assertEquals("P1M", doc("i", t, 1).get("i"));
+    assertEquals("P1Y2M", doc("i", t, 14L).get("i"));
+  }
+
+  /** Would have caught review bug 11: a ROW value in a single-column scalar row read as the row. */
+  @Test
+  void rowValueIsNotMistakenForTheWholeRowWhenFormatIsScalar() {
+    RelDataType row = TF.builder().add("a", VARCHAR).add("b", BIGINT).build();
+    Object[] rowValue = {"x", 2L};
+    assertEquals(1, CollectDocs.rowValues(rowValue, true).length);
+    assertSame(rowValue, CollectDocs.rowValues(rowValue, true)[0]);
+    assertSame(rowValue, CollectDocs.rowValues(rowValue, false));
+    assertEquals(Map.of("a", "x", "b", 2L), doc("r", row, rowValue).get("r"));
   }
 }
