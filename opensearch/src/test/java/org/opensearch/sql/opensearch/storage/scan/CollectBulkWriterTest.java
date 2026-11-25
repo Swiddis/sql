@@ -96,6 +96,24 @@ class CollectBulkWriterTest {
     assertTrue(e.getMessage().contains("rows_written=2"), e.getMessage());
   }
 
+  /**
+   * Would have caught review bug B: a null id after earlier batches were written failed the query
+   * without saying how much had been written.
+   */
+  @Test
+  void nullIdInALaterBatchReportsRowsWritten() {
+    CollectBulkWriter w = writer(client(i -> null), List.of("host"), 2);
+    for (int i = 0; i < 4; i++) {
+      w.add(new Object[] {"h" + i, 1L});
+    }
+    OpenSearchStatusException e =
+        assertThrows(OpenSearchStatusException.class, () -> w.add(new Object[] {null, 1L}));
+    assertEquals(RestStatus.BAD_REQUEST, e.status());
+    assertTrue(e.getMessage().contains("rows_written=4"), e.getMessage());
+    assertTrue(e.getMessage().contains("rows_failed=1"), e.getMessage());
+    assertTrue(e.getMessage().contains("all null"), e.getMessage());
+  }
+
   /** Would have caught T13: a user with no write grant on dest got HTTP 200 and 0 rows. */
   @Test
   void securityItemFailureSurfacesAs403() {

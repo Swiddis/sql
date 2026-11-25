@@ -121,13 +121,15 @@ final class CollectBulkWriter {
         idValues.add(CollectDocs.toJson(values[p], types.get(p)));
       }
       if (idValues.stream().allMatch(Objects::isNull)) {
-        // All rows with a null key would share one _id and silently overwrite each other.
+        // All rows with a null key would share one _id and silently overwrite each other. Earlier
+        // batches are already written, so the error says how many rows landed.
         throw new OpenSearchStatusException(
-            "collect id field(s) "
+            "collect failed: rows_written="
+                + written
+                + " rows_failed=1 (a row whose id field(s) "
                 + idFields
-                + " are all null in a row; every id field is null,"
-                + " so the row has no identity. Filter these rows out (where isnotnull(...)) or"
-                + " give them a value (fillnull) before collect.",
+                + " are all null has no identity; rows already written stay). Filter these rows"
+                + " out (where isnotnull(...)) or give them a value (fillnull) before collect.",
             RestStatus.BAD_REQUEST);
       }
       req.id(CollectDocs.documentId(idValues)).opType(DocWriteRequest.OpType.INDEX);
