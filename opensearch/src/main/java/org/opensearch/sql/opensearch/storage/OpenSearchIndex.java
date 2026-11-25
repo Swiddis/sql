@@ -23,6 +23,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.util.CompositeMap;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.sql.calcite.plan.AbstractOpenSearchTable;
+import org.opensearch.sql.calcite.plan.rel.CollectTarget;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.data.type.ExprCoreType;
 import org.opensearch.sql.data.type.ExprType;
@@ -39,6 +40,7 @@ import org.opensearch.sql.opensearch.request.OpenSearchRequest;
 import org.opensearch.sql.opensearch.request.OpenSearchRequestBuilder;
 import org.opensearch.sql.opensearch.request.system.OpenSearchDescribeIndexRequest;
 import org.opensearch.sql.opensearch.storage.scan.CalciteLogicalIndexScan;
+import org.opensearch.sql.opensearch.storage.scan.CollectDestinationCheck;
 import org.opensearch.sql.opensearch.storage.scan.OpenSearchIndexScan;
 import org.opensearch.sql.opensearch.storage.scan.OpenSearchIndexScanBuilder;
 import org.opensearch.sql.planner.DefaultImplementor;
@@ -52,7 +54,7 @@ import org.opensearch.sql.storage.read.TableScanBuilder;
 import org.opensearch.transport.client.node.NodeClient;
 
 /** OpenSearch table (index) implementation. */
-public class OpenSearchIndex extends AbstractOpenSearchTable {
+public class OpenSearchIndex extends AbstractOpenSearchTable implements CollectTarget {
 
   public static final String METADATA_FIELD_ID = "_id";
   public static final String METADATA_FIELD_INDEX = "_index";
@@ -105,6 +107,11 @@ public class OpenSearchIndex extends AbstractOpenSearchTable {
   public RelNode toRel(RelOptTable.ToRelContext context, RelOptTable relOptTable) {
     final RelOptCluster cluster = context.getCluster();
     return new CalciteLogicalIndexScan(cluster, relOptTable, this);
+  }
+
+  @Override
+  public void checkCollectTarget() {
+    CollectDestinationCheck.check(client, indexName.toString());
   }
 
   @Override

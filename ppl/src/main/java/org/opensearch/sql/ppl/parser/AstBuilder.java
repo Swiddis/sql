@@ -796,22 +796,50 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
   /** Collect command visitor (write sink): destination index, optional {@code id=} and testmode. */
   @Override
   public UnresolvedPlan visitCollectCommand(CollectCommandContext ctx) {
-    String indexName = StringUtils.unquoteIdentifier(ctx.tableSourceClause().getText());
-    Collect collect = new Collect(indexName);
+    requireWriteCommandsEnabled("collect");
+    UnresolvedPlan dest = visitTableSourceClause(ctx.tableSourceClause());
+    if (!(dest instanceof Relation relation)) {
+      throw new SyntaxCheckException("collect: the destination index does not take an alias");
+    }
+    Collect collect = new Collect(relation.getTableQualifiedName());
+    // index= is the grammar's own first option; a second one parses as an option named index.
+    Set<String> seen = new HashSet<>(Set.of("index"));
     for (CollectOptionContext opt : ctx.collectOption()) {
+      String name =
+          opt.testmode != null
+              ? "testmode"
+              : StringUtils.unquoteIdentifier(opt.idOption.getText()).toLowerCase(Locale.ROOT);
+      if (!seen.add(name)) {
+        throw new SyntaxCheckException(
+            String.format("collect: option [%s] is given more than once", name));
+      }
+      if (!"testmode".equals(name) && !"id".equals(name)) {
+        throw new SyntaxCheckException(
+            String.format("collect: unknown option [%s]; supported: id, testmode", name));
+      }
       if (opt.testmode != null) {
         collect.setTestmode(Boolean.parseBoolean(opt.testmode.getText()));
       } else {
-        String name = StringUtils.unquoteIdentifier(opt.idOption.getText());
-        if (!"id".equalsIgnoreCase(name)) {
-          throw new SyntaxCheckException(
-              String.format("collect: unknown option [%s]; supported: id, testmode", name));
-        }
         collect.setIdFields(
             opt.idFields.stream().map(f -> StringUtils.unquoteIdentifier(f.getText())).toList());
       }
     }
     return collect;
+  }
+
+  /**
+   * Write commands (such as {@code collect}) can be turned off cluster-wide. Unset counts as
+   * enabled, the setting's default.
+   */
+  private void requireWriteCommandsEnabled(String command) {
+    if (settings != null
+        && Boolean.FALSE.equals(settings.getSettingValue(Key.PPL_WRITE_COMMANDS_ENABLED))) {
+      throw new SemanticCheckException(
+          String.format(
+              "%s is disabled on this cluster: write commands are off. Set %s to true to enable"
+                  + " them.",
+              command, Key.PPL_WRITE_COMMANDS_ENABLED.getKeyValue()));
+    }
   }
 
   /** Bin command visitor. */

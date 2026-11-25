@@ -50,7 +50,6 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
-import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.ViewExpanders;
 import org.apache.calcite.rel.RelCollation;
@@ -179,6 +178,7 @@ import org.opensearch.sql.calcite.plan.AbstractOpenSearchTable;
 import org.opensearch.sql.calcite.plan.AliasFieldsWrappable;
 import org.opensearch.sql.calcite.plan.HighlightPushDown;
 import org.opensearch.sql.calcite.plan.OpenSearchConstants;
+import org.opensearch.sql.calcite.plan.rel.CollectTarget;
 import org.opensearch.sql.calcite.plan.rel.LogicalCollectSink;
 import org.opensearch.sql.calcite.plan.rel.LogicalGraphLookup;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
@@ -916,27 +916,18 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   @Override
   public RelNode visitCollect(Collect node, CalcitePlanContext context) {
     visitChildren(node, context);
-    if (node.getIndexName().startsWith(".")) {
+    String indexName = resolveCollectDestination(node);
+    RelOptTable dest = collectDestinationTable(indexName, context);
+    CollectTarget target = dest.unwrap(CollectTarget.class);
+    if (target == null) {
       throw new SemanticCheckException(
           String.format(
-              "collect cannot write to system or hidden index [%s]; dot-prefixed indices are"
-                  + " refused",
-              node.getIndexName()));
+              "collect destination [%s] is not an OpenSearch index; collect writes only to"
+                  + " indices",
+              indexName));
     }
-    // testmode is a dry run: emit the rows, but skip the write and destination resolution.
-    if (node.isTestmode()) {
-      return context.relBuilder.peek();
-    }
-    RelNode child = context.relBuilder.build();
-    RelOptSchema relOptSchema = context.relBuilder.getRelOptSchema();
-    RelOptTable dest = relOptSchema.getTableForMember(List.of(node.getIndexName()));
-    if (dest == null) {
-      throw new SemanticCheckException(
-          String.format(
-              "collect destination index [%s] does not exist; collect requires a pre-existing"
-                  + " destination index",
-              node.getIndexName()));
-    }
+    target.checkCollectTarget();
+    RelNode child = context.relBuilder.peek();
     List<String> inputFields = child.getRowType().getFieldNames();
     for (String f : node.getIdFields()) {
       if (!inputFields.contains(f)) {
@@ -944,8 +935,79 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
             String.format("collect id field [%s] is not a column of the input %s", f, inputFields));
       }
     }
-    context.relBuilder.push(LogicalCollectSink.create(child, dest, node.getIdFields()));
+    // testmode is a dry run: the same checks as a write, then emit the rows the write would send.
+    if (node.isTestmode()) {
+      List<RexNode> anyValue =
+          child.getRowType().getFieldList().stream()
+              .filter(f -> !OpenSearchConstants.METADATAFIELD_TYPE_MAP.containsKey(f.getName()))
+              .map(
+                  f ->
+                      (RexNode)
+                          context.relBuilder.isNotNull(context.relBuilder.field(f.getIndex())))
+              .toList();
+      if (!anyValue.isEmpty()) {
+        // The writer skips rows whose every non-metadata column is null; so does the preview.
+        context.relBuilder.filter(context.relBuilder.or(anyValue));
+      }
+      return context.relBuilder.peek();
+    }
+    context.relBuilder.push(
+        LogicalCollectSink.create(context.relBuilder.build(), dest, node.getIdFields()));
     return context.relBuilder.peek();
+  }
+
+  /**
+   * The destination's index name, resolved like a {@code source=} name. It must name one index or
+   * alias: wildcards, comma lists and {@code _all} would fan a write out over several indices.
+   */
+  private String resolveCollectDestination(Collect node) {
+    DataSourceSchemaIdentifierNameResolver nameResolver =
+        new DataSourceSchemaIdentifierNameResolver(
+            dataSourceService, node.getDestination().getParts());
+    if (!nameResolver
+        .getDataSourceName()
+        .equals(DataSourceSchemaIdentifierNameResolver.DEFAULT_DATASOURCE_NAME)) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect destination [%s] is not in the default OpenSearch data source",
+              node.getIndexName()));
+    }
+    String name = nameResolver.getIdentifierName();
+    if (name.isEmpty() || name.contains("*") || name.contains(",") || name.equals("_all")) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect destination [%s] must be a single index or alias; wildcards,"
+                  + " comma-separated lists and _all are not allowed",
+              name));
+    }
+    if (name.startsWith(".")) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect cannot write to system or hidden index [%s]; dot-prefixed indices are"
+                  + " refused",
+              name));
+    }
+    return name;
+  }
+
+  private static RelOptTable collectDestinationTable(String indexName, CalcitePlanContext context) {
+    RelOptTable dest;
+    try {
+      dest = context.relBuilder.getRelOptSchema().getTableForMember(List.of(indexName));
+    } catch (ErrorReport e) {
+      if (e.getCode() != ErrorCode.INDEX_NOT_FOUND) {
+        throw e;
+      }
+      dest = null;
+    }
+    if (dest == null) {
+      throw new SemanticCheckException(
+          String.format(
+              "collect destination index [%s] does not exist; collect requires a pre-existing"
+                  + " destination index",
+              indexName));
+    }
+    return dest;
   }
 
   @Override

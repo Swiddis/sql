@@ -6,7 +6,9 @@
 package org.opensearch.sql.calcite.remote;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 import static org.opensearch.sql.util.MatcherUtils.verifyErrorMessageContains;
 
 import java.io.IOException;
@@ -214,5 +216,193 @@ public class CalcitePPLCollectIT extends PPLIntegTestCase {
                 + " testmode=true");
     assertEquals(3, result.getJSONArray("datarows").length());
     assertEquals(0L, count("collect_dest_testmode"));
+  }
+
+  private JSONObject get(String path) throws IOException {
+    return new JSONObject(
+        new String(
+            client()
+                .performRequest(new Request("GET", path))
+                .getEntity()
+                .getContent()
+                .readAllBytes(),
+            java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  /** The _source of every doc in the index, after a refresh. */
+  private JSONArray sources(String index) throws IOException {
+    client().performRequest(new Request("POST", "/" + index + "/_refresh"));
+    JSONArray hits =
+        get("/" + index + "/_search?size=100").getJSONObject("hits").getJSONArray("hits");
+    JSONArray out = new JSONArray();
+    for (int i = 0; i < hits.length(); i++) {
+      out.put(hits.getJSONObject(i).getJSONObject("_source"));
+    }
+    return out;
+  }
+
+  private static int status(Exception e) {
+    return ((ResponseException) e).getResponse().getStatusLine().getStatusCode();
+  }
+
+  private void setPushdown(String value) throws IOException {
+    updateClusterSettings(
+        new ClusterSetting("transient", "plugins.calcite.pushdown.enabled", value));
+  }
+
+  /**
+   * Bug 1: rename/eval after a pushed-down projection wrote the source names (`name`, not `who`),
+   * and id=who failed at runtime. Runs with pushdown on and off.
+   */
+  @Test
+  public void testCollectWritesRenamedColumnsUnderOutputNames() throws IOException {
+    seed("collect_src_rename");
+    for (String pushdown : new String[] {"true", "false"}) {
+      setPushdown(pushdown);
+      try {
+        String dest = "collect_dest_rename_" + pushdown;
+        createIndex(dest, "{}");
+        executeQuery(
+            "source=collect_src_rename | stats count() as c by name | rename name as who"
+                + " | collect index="
+                + dest
+                + " id=who");
+        executeQuery(
+            "source=collect_src_rename | eval y = id | fields y, name | rename name as who2"
+                + " | collect index="
+                + dest);
+        JSONArray docs = sources(dest);
+        assertEquals("pushdown=" + pushdown + " " + docs, 6, docs.length());
+        for (int i = 0; i < docs.length(); i++) {
+          JSONObject doc = docs.getJSONObject(i);
+          assertFalse("pushdown=" + pushdown + " wrote a source name: " + doc, doc.has("name"));
+          assertFalse("pushdown=" + pushdown + " wrote a source name: " + doc, doc.has("id"));
+          assertTrue(doc.toString(), doc.has("who") || (doc.has("who2") && doc.has("y")));
+        }
+      } finally {
+        setPushdown("true");
+      }
+    }
+  }
+
+  /** Bug 4: an alias, index.hidden=true and date math must not bypass the hidden-index guard. */
+  @Test
+  public void testCollectHiddenIndexGuardResolvesTheName() throws IOException {
+    seed("collect_src_hidden");
+    createIndex(".collect_hidden_target", MAPPING);
+    Request alias = new Request("POST", "/_aliases");
+    alias.setJsonEntity(
+        "{\"actions\":[{\"add\":{\"index\":\".collect_hidden_target\","
+            + "\"alias\":\"collect_plain_alias\"}}]}");
+    client().performRequest(alias);
+    createIndex(
+        "collect_hidden_nodot", "{\"settings\":{\"index.hidden\":true}," + MAPPING.substring(1));
+    client().performRequest(new Request("PUT", "/%3C.collect_dm-%7Bnow%2Fd%7D%3E"));
+    for (String dest :
+        new String[] {"collect_plain_alias", "collect_hidden_nodot", "`<.collect_dm-{now/d}>`"}) {
+      Exception e =
+          assertQueryFails("source=collect_src_hidden | fields id | collect index=" + dest);
+      verifyErrorMessageContains(e, "system or hidden");
+      assertEquals(dest, 400, status(e));
+    }
+    assertEquals(0L, count(".collect_hidden_target"));
+    assertEquals(0L, count("collect_hidden_nodot"));
+  }
+
+  /** Bug 4: wildcards, comma lists and _all are refused at analysis with a 400. */
+  @Test
+  public void testCollectMultiIndexDestinationRefused() throws IOException {
+    seed("collect_src_multi");
+    for (String dest : new String[] {"collect_dest_m*", "collect_a, collect_b", "_all"}) {
+      Exception e = assertQueryFails("source=collect_src_multi | collect index=" + dest);
+      verifyErrorMessageContains(e, "must be a single index or alias");
+      verifyErrorMessageContains(e, "SemanticCheckException");
+      assertEquals(dest, 400, status(e));
+    }
+  }
+
+  /** Bug 8: a dry run fails where the write would (missing destination, bad id field). */
+  @Test
+  public void testCollectTestmodeValidatesLikeAWrite() throws IOException {
+    seed("collect_src_tm_valid");
+    createIndex("collect_dest_tm_valid", MAPPING);
+    verifyErrorMessageContains(
+        assertQueryFails(
+            "source=collect_src_tm_valid | collect index=collect_tm_no_such testmode=true"),
+        "does not exist");
+    verifyErrorMessageContains(
+        assertQueryFails(
+            "source=collect_src_tm_valid | fields name | collect index=collect_dest_tm_valid"
+                + " id=status testmode=true"),
+        "is not a column of the input");
+  }
+
+  /** Bug 8: the preview drops all-null rows, which the write skips. */
+  @Test
+  public void testCollectTestmodeOmitsAllNullRows() throws IOException {
+    seed("collect_src_tm_null");
+    indexDoc("collect_src_tm_null", 4, "{\"status\":404}");
+    createIndex("collect_dest_tm_null", MAPPING);
+    String ppl =
+        "source=collect_src_tm_null | fields id, name | collect index=collect_dest_tm_null";
+    JSONObject preview = executeQuery(ppl + " testmode=true");
+    assertEquals(3, preview.getJSONArray("datarows").length());
+    assertEquals(3L, rowsWritten(executeQuery(ppl)));
+  }
+
+  /** Bug 9: a missing destination gets the friendly analysis message, as a 400. */
+  @Test
+  public void testCollectMissingDestinationIsFriendly400() throws IOException {
+    seed("collect_src_missing400");
+    Exception e =
+        assertQueryFails("source=collect_src_missing400 | collect index=collect_no_such_dest2");
+    verifyErrorMessageContains(
+        e, "collect destination index [collect_no_such_dest2] does not exist");
+    assertEquals(400, status(e));
+  }
+
+  /** Bug 9: a destination that is not an index (a system catalog table) gets a clear error. */
+  @Test
+  public void testCollectNonIndexDestinationRefused() throws IOException {
+    seed("collect_src_nonindex");
+    Exception e =
+        assertQueryFails("source=collect_src_nonindex | collect index=`ALL.META_ODFE_SYS_TABLE`");
+    verifyErrorMessageContains(e, "is not an OpenSearch index");
+    assertEquals(400, status(e));
+  }
+
+  /** Bug 13: a duplicate testmode used to be accepted, last value winning, so it wrote. */
+  @Test
+  public void testCollectDuplicateOptionRefused() throws IOException {
+    seed("collect_src_dup");
+    createIndex("collect_dest_dup", MAPPING);
+    Exception e =
+        assertQueryFails(
+            "source=collect_src_dup | fields id | collect index=collect_dest_dup testmode=true"
+                + " testmode=false");
+    verifyErrorMessageContains(e, "more than once");
+    assertEquals(0L, count("collect_dest_dup"));
+  }
+
+  /** plugins.ppl.write_commands.enable=false refuses collect (testmode too) and writes nothing. */
+  @Test
+  public void testCollectRefusedWhenWriteCommandsDisabled() throws IOException {
+    seed("collect_src_disabled");
+    createIndex("collect_dest_disabled", MAPPING);
+    String ppl = "source=collect_src_disabled | fields id | collect index=collect_dest_disabled";
+    updateClusterSettings(
+        new ClusterSetting("transient", "plugins.ppl.write_commands.enable", "false"));
+    try {
+      for (String q : new String[] {ppl, ppl + " testmode=true"}) {
+        Exception e = assertQueryFails(q);
+        verifyErrorMessageContains(e, "plugins.ppl.write_commands.enable");
+        assertEquals(400, status(e));
+      }
+      assertEquals(0L, count("collect_dest_disabled"));
+    } finally {
+      updateClusterSettings(
+          new ClusterSetting("transient", "plugins.ppl.write_commands.enable", "true"));
+    }
+    assertEquals(3L, rowsWritten(executeQuery(ppl)));
   }
 }
